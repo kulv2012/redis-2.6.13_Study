@@ -1,4 +1,6 @@
 /* Background I/O service for Redis.
+后台的IO服务。比如关闭文件。目前只有一个操作是要放到后台线程中的，那就是文件的close .
+这样避免close大文件的时候出现卡顿。
  *
  * This file implements operations that we need to perform in the background.
  * Currently there is only a single operation, that is a background close(2)
@@ -88,7 +90,7 @@ void *bioProcessBackgroundJobs(void *arg);
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 
 /* Initialize the background system, spawning the thread. */
-void bioInit(void) {
+void bioInit(void) {//初始化后端线程系统。用来关闭文件等。
     pthread_attr_t attr;
     pthread_t thread;
     size_t stacksize;
@@ -112,8 +114,9 @@ void bioInit(void) {
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
      * responsible of. */
-    for (j = 0; j < REDIS_BIO_NUM_OPS; j++) {
+    for (j = 0; j < REDIS_BIO_NUM_OPS; j++) {//配置了2个后端线程。不可配置的。
         void *arg = (void*)(unsigned long) j;
+	//创建bio后端线程。用来在后台删除文件，避免系统卡顿，将文件内容fsync到磁盘去的进程
         if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
             redisLog(REDIS_WARNING,"Fatal: Can't initialize Background Jobs.");
             exit(1);
@@ -129,15 +132,16 @@ void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     job->arg2 = arg2;
     job->arg3 = arg3;
     pthread_mutex_lock(&bio_mutex[type]);
-    listAddNodeTail(bio_jobs[type],job);
-    bio_pending[type]++;
+    listAddNodeTail(bio_jobs[type],job);//挂了一个这样的job到这里。
+    bio_pending[type]++;//增加这个类型的挂起的job数目计数。
     pthread_cond_signal(&bio_condvar[type]);
     pthread_mutex_unlock(&bio_mutex[type]);
 }
 
 void *bioProcessBackgroundJobs(void *arg) {
+	//bioInit创建一个进程，用来刷文件。
     struct bio_job *job;
-    unsigned long type = (unsigned long) arg;
+    unsigned long type = (unsigned long) arg;//实际上就是jobid。序号
     sigset_t sigset;
 
     pthread_detach(pthread_self());
@@ -147,8 +151,7 @@ void *bioProcessBackgroundJobs(void *arg) {
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGALRM);
     if (pthread_sigmask(SIG_BLOCK, &sigset, NULL))
-        redisLog(REDIS_WARNING,
-            "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
+        redisLog(REDIS_WARNING, "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
 
     while(1) {
         listNode *ln;
@@ -159,17 +162,18 @@ void *bioProcessBackgroundJobs(void *arg) {
             continue;
         }
         /* Pop the job from the queue. */
-        ln = listFirst(bio_jobs[type]);
+        ln = listFirst(bio_jobs[type]);//获取到了一个任务，处理值。
         job = ln->value;
         /* It is now possible to unlock the background system as we know have
          * a stand alone job structure to process.*/
         pthread_mutex_unlock(&bio_mutex[type]);
 
+		//根据不同的任务类型，做响应的清理。
         /* Process the job accordingly to its type. */
         if (type == REDIS_BIO_CLOSE_FILE) {
-            close((long)job->arg1);
+            close((long)job->arg1);//关闭文件。
         } else if (type == REDIS_BIO_AOF_FSYNC) {
-            aof_fsync((long)job->arg1);
+            aof_fsync((long)job->arg1);//同步刷新数据。
         } else {
             redisPanic("Wrong job type in bioProcessBackgroundJobs().");
         }
@@ -179,7 +183,7 @@ void *bioProcessBackgroundJobs(void *arg) {
          * jobs to process we'll block again in pthread_cond_wait(). */
         pthread_mutex_lock(&bio_mutex[type]);
         listDelNode(bio_jobs[type],ln);
-        bio_pending[type]--;
+        bio_pending[type]--;//递减这种类型的挂起计数。
     }
 }
 

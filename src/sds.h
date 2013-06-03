@@ -30,7 +30,7 @@
 
 #ifndef __SDS_H
 #define __SDS_H
-
+//最大成倍增加的字符串大小，实际可以达到这个的2倍稍微小一点。也就是2M
 #define SDS_MAX_PREALLOC (1024*1024)
 
 #include <sys/types.h>

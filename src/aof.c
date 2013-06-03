@@ -87,13 +87,16 @@ unsigned long aofRewriteBufferSize(void) {
 
 /* Append data to the AOF rewrite buffer, allocating new blocks if needed. */
 void aofRewriteBufferAppend(unsigned char *s, unsigned long len) {
+//将s指令放到server.aof_rewrite_buf_blocks的后面，等子进程写完他的快照后，
+//主进程就会感知到子进程的退出，从而将写入到这个里面的数据追加到AOF文件的后面，已保证
+//持久化的过程中不会出现丢指令的情况。feedAppendOnlyFile判断如果有子进程在倒数据会调用这里。
     listNode *ln = listLast(server.aof_rewrite_buf_blocks);
     aofrwblock *block = ln ? ln->value : NULL;
 
     while(len) {
         /* If we already got at least an allocated block, try appending
          * at least some piece into it. */
-        if (block) {
+        if (block) {//当前这块还可能有空闲内存，尽量拷贝到这里面去。
             unsigned long thislen = (block->free < len) ? block->free : len;
             if (thislen) {  /* The current block is not already full. */
                 memcpy(block->buf+block->used, s, thislen);
@@ -103,21 +106,20 @@ void aofRewriteBufferAppend(unsigned char *s, unsigned long len) {
                 len -= thislen;
             }
         }
-
+		//还有长度，需要申请一个块了，用来存储后面的指令。
         if (len) { /* First block to allocate, or need another block. */
             int numblocks;
 
             block = zmalloc(sizeof(*block));
             block->free = AOF_RW_BUF_BLOCK_SIZE;
             block->used = 0;
-            listAddNodeTail(server.aof_rewrite_buf_blocks,block);
+            listAddNodeTail(server.aof_rewrite_buf_blocks,block);//放到后面去。
 
             /* Log every time we cross more 10 or 100 blocks, respectively
              * as a notice or warning. */
             numblocks = listLength(server.aof_rewrite_buf_blocks);
             if (((numblocks+1) % 10) == 0) {
-                int level = ((numblocks+1) % 100) == 0 ? REDIS_WARNING :
-                                                         REDIS_NOTICE;
+                int level = ((numblocks+1) % 100) == 0 ? REDIS_WARNING : REDIS_NOTICE;
                 redisLog(level,"Background AOF buffer size: %lu MB",
                     aofRewriteBufferSize()/(1024*1024));
             }
@@ -227,11 +229,14 @@ int startAppendOnly(void) {
  * However if force is set to 1 we'll write regardless of the background
  * fsync. */
 void flushAppendOnlyFile(int force) {
+//beforeSleep函数每次在aeMain等待epoll之前调用，从而调用则例带0的参数，非强制的刷aof文件。
+//将server.aof_buf的内容刷到磁盘AOF文件后面。如果有EVERYSEC标志，
+//则在后端bio进程的队列里面挂在一个事件，后续bioProcessBackgroundJobs函数会处理这个的，进行fsync
     ssize_t nwritten;
     int sync_in_progress = 0;
 
     if (sdslen(server.aof_buf) == 0) return;
-
+	//看看现在是不是还有REDIS_BIO_AOF_FSYNC类型的刷新操作在后台。
     if (server.aof_fsync == AOF_FSYNC_EVERYSEC)
         sync_in_progress = bioPendingJobsOfType(REDIS_BIO_AOF_FSYNC) != 0;
 
@@ -240,10 +245,10 @@ void flushAppendOnlyFile(int force) {
          * If the fsync is still in progress we can try to delay
          * the write for a couple of seconds. */
         if (sync_in_progress) {
-            if (server.aof_flush_postponed_start == 0) {
+            if (server.aof_flush_postponed_start == 0) {//还没开始，这是第一次进入。
                 /* No previous write postponinig, remember that we are
                  * postponing the flush and return. */
-                server.aof_flush_postponed_start = server.unixtime;
+                server.aof_flush_postponed_start = server.unixtime;//记住这次的时间，后续再看看是不是超过了2秒，如果是就进行后面的刷新操作处理。
                 return;
             } else if (server.unixtime - server.aof_flush_postponed_start < 2) {
                 /* We were already waiting for fsync to finish, but for less
@@ -256,6 +261,8 @@ void flushAppendOnlyFile(int force) {
             redisLog(REDIS_NOTICE,"Asynchronous AOF fsync is taking too long (disk is busy?). Writing the AOF buffer without waiting for fsync to complete, this may slow down Redis.");
         }
     }
+
+	//到这里后，肯定是等的超过了2秒，或者后面没有进程在刷新AOF.
     /* If you are following this code path, then we are going to write so
      * set reset the postponed flush sentinel to zero. */
     server.aof_flush_postponed_start = 0;
@@ -267,6 +274,8 @@ void flushAppendOnlyFile(int force) {
      * or alike */
     nwritten = write(server.aof_fd,server.aof_buf,sdslen(server.aof_buf));
     if (nwritten != (signed)sdslen(server.aof_buf)) {
+//如果上面的写文件失败，那么直接exit进程，这个好干脆啊·····
+//写失败肯定是致命错误么，不一定吧，比如缓存不够，磁盘慢了等。
         /* Ooops, we are in troubles. The best thing to do for now is
          * aborting instead of giving the illusion that everything is
          * working as expected. */
@@ -305,7 +314,8 @@ void flushAppendOnlyFile(int force) {
     if (server.aof_no_fsync_on_rewrite &&
         (server.aof_child_pid != -1 || server.rdb_child_pid != -1))
             return;
-
+//调用fdatasync将数据刷到磁盘去，刷到磁盘缓冲区了。并没有写到磁盘介质中。
+//真刷，在主进程中干这个事情太危险了，会阻塞的。
     /* Perform the fsync if needed. */
     if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
         /* aof_fsync is defined as fdatasync() for Linux in order to avoid
@@ -314,23 +324,26 @@ void flushAppendOnlyFile(int force) {
         server.aof_last_fsync = server.unixtime;
     } else if ((server.aof_fsync == AOF_FSYNC_EVERYSEC &&
                 server.unixtime > server.aof_last_fsync)) {
+      //每隔一秒挂一个刷新磁盘操作到bio_jobs[REDIS_BIO_AOF_FSYNC]数组里面
+      //供后端的定时任务进程去处理。这个进程执行bioProcessBackgroundJobs函数。
         if (!sync_in_progress) aof_background_fsync(server.aof_fd);
         server.aof_last_fsync = server.unixtime;
     }
 }
 
 sds catAppendOnlyGenericCommand(sds dst, int argc, robj **argv) {
+	//根据argc,argv恢复客户端发送过来的指令，返回之。
     char buf[32];
     int len, j;
     robj *o;
 
     buf[0] = '*';
-    len = 1+ll2string(buf+1,sizeof(buf)-1,argc);
+    len = 1+ll2string(buf+1,sizeof(buf)-1,argc);//拼接参数数目
     buf[len++] = '\r';
     buf[len++] = '\n';
-    dst = sdscatlen(dst,buf,len);
+    dst = sdscatlen(dst,buf,len);//把参数长度的指令放入dst后面
 
-    for (j = 0; j < argc; j++) {
+    for (j = 0; j < argc; j++) {//一个个拼接参数，组成$len arg的参数。放到dst
         o = getDecodedObject(argv[j]);
         buf[0] = '$';
         len = 1+ll2string(buf+1,sizeof(buf)-1,sdslen(o->ptr));
@@ -382,18 +395,21 @@ sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, r
 }
 
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
+	//将这条指令还原成字符串表示，然后将其追加到server.aof_buf 字符串后面，
+	//在beforeSleep的末尾会调用flushAppendOnlyFile将server.aof_buf里面的数据写入文件的。
     sds buf = sdsempty();
     robj *tmpargv[3];
 
     /* The DB this command was targeting is not the same as the last command
      * we appendend. To issue a SELECT command is needed. */
     if (dictid != server.aof_selected_db) {
+		//如果当前选择的库不是目标库，则在指令前面插入一个SELECT db的指令。
         char seldb[64];
 
         snprintf(seldb,sizeof(seldb),"%d",dictid);
         buf = sdscatprintf(buf,"*2\r\n$6\r\nSELECT\r\n$%lu\r\n%s\r\n",
             (unsigned long)strlen(seldb),seldb);
-        server.aof_selected_db = dictid;
+        server.aof_selected_db = dictid;//修改当前选择的db
     }
 
     if (cmd->proc == expireCommand || cmd->proc == pexpireCommand ||
@@ -412,15 +428,19 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         /* All the other commands don't need translation or need the
          * same translation already operated in the command vector
          * for the replication itself. */
+ //根据argc,argv恢复客户端发送过来的指令，返回之。
         buf = catAppendOnlyGenericCommand(buf,argc,argv);
     }
-
+//到这里已经拼接好了客户端发送过来的指令的字符串，放在buf。
+//在beforeSleep的末尾会调用flushAppendOnlyFile将server.aof_buf里面的数据写入文件的。
     /* Append to the AOF buffer. This will be flushed on disk just before
      * of re-entering the event loop, so before the client will get a
      * positive reply about the operation performed. */
     if (server.aof_state == REDIS_AOF_ON)
         server.aof_buf = sdscatlen(server.aof_buf,buf,sdslen(buf));
 
+//如果有子进程在倒数据到AOF文件里面，那么其写入的肯定是之前的快照，fork的。所以这里需要记住
+//这些改动的指令，以备子进程写完后，主进程能将这期间的数据追加到AOF文件后面。
     /* If a background append only file rewriting is in progress we want to
      * accumulate the differences between the child DB and the current one
      * in a buffer, so that when the child process will do its work we

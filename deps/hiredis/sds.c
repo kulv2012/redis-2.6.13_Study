@@ -217,12 +217,14 @@ sds sdstrim(sds s, const char *cset) {
 }
 
 sds sdsrange(sds s, int start, int end) {
+	//调用: sdsrange(c->querybuf,pos,-1);
+	//对字符串进行修剪，会导致内存的拷贝。
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     size_t newlen, len = sdslen(s);
 
     if (len == 0) return s;
     if (start < 0) {
-        start = len+start;
+        start = len+start;//如果start为负数，代表从后面数起，这里转换为从前面的下标。
         if (start < 0) start = 0;
     }
     if (end < 0) {
@@ -240,6 +242,7 @@ sds sdsrange(sds s, int start, int end) {
     } else {
         start = 0;
     }
+	//将后面的字符串拷贝到前面来。指向一下不是很好么，性能更好
     if (start && newlen) memmove(sh->buf, sh->buf+start, newlen);
     sh->buf[newlen] = 0;
     sh->free = sh->free+(sh->len-newlen);

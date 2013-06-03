@@ -790,6 +790,7 @@ void blockForKeys(redisClient *c, robj **keys, int numkeys, time_t timeout, robj
 
 /* Unblock a client that's waiting in a blocking operation such as BLPOP */
 void unblockClientWaitingData(redisClient *c) {
+//关于blpop指令，参考这里http://redis.readthedocs.org/en/latest/list/blpop.html
     dictEntry *de;
     dictIterator *di;
     list *l;

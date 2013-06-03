@@ -51,7 +51,7 @@
 #include <sys/utsname.h>
 
 /* Our shared "common" objects */
-
+//这个变量基本就保存一写字符串常量。createSharedObjects里面初始化的
 struct sharedObjectsStruct shared;
 
 /* Global vars that are actually used as constants. The following double
@@ -1053,6 +1053,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors. */
 void beforeSleep(struct aeEventLoop *eventLoop) {
+//aeMain在去等待处理各种读写事件之前调用这个函数，进行一些辅助工作。
     REDIS_NOTUSED(eventLoop);
     listNode *ln;
     redisClient *c;
@@ -1072,14 +1073,15 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
             server.current_client = NULL;
         }
     }
-
+//将之前的指令的改动，写入到AOF文件中，内容在server.aof_buf里面了。
+//feedAppendOnlyFile函数在判断如果打开了AOF标志的话会保存到上面的字符串里面的。
     /* Write the AOF buffer on disk */
     flushAppendOnlyFile(0);
 }
 
 /* =========================== Server initialization ======================== */
 
-void createSharedObjects(void) {
+void createSharedObjects(void) {//创建shared全局变量上面的各个成员，都是字符串
     int j;
 
     shared.crlf = createObject(REDIS_STRING,sdsnew("\r\n"));
@@ -1150,6 +1152,7 @@ void createSharedObjects(void) {
     }
 }
 
+/*初始化redisServer server这个大结构。没有其他动作，只是初始化数据*/
 void initServerConfig() {
     getRandomHexChars(server.runid,REDIS_RUN_ID_SIZE);
     server.hz = REDIS_DEFAULT_HZ;
@@ -1287,7 +1290,7 @@ void initServerConfig() {
  * max number of clients, the function will do the reverse setting
  * server.maxclients to the value that we can actually handle. */
 void adjustOpenFilesLimit(void) {
-    rlim_t maxfiles = server.maxclients+32;
+    rlim_t maxfiles = server.maxclients+32;//最好支持配置的大小+32个。
     struct rlimit limit;
 
     if (getrlimit(RLIMIT_NOFILE,&limit) == -1) {
@@ -1303,14 +1306,14 @@ void adjustOpenFilesLimit(void) {
             rlim_t f;
             
             f = maxfiles;
-            while(f > oldlimit) {
+            while(f > oldlimit) {//够尽职的，从设置的最大，不断set，失败了就减少128继续尝试。
                 limit.rlim_cur = f;
                 limit.rlim_max = f;
                 if (setrlimit(RLIMIT_NOFILE,&limit) != -1) break;
                 f -= 128;
             }
             if (f < oldlimit) f = oldlimit;
-            if (f != maxfiles) {
+            if (f != maxfiles) {//调整大小。
                 server.maxclients = f-32;
                 redisLog(REDIS_WARNING,"Unable to set the max number of files limit to %d (%s), setting the max clients configuration to %d.",
                     (int) maxfiles, strerror(errno), (int) server.maxclients);
@@ -1321,17 +1324,26 @@ void adjustOpenFilesLimit(void) {
         }
     }
 }
-
+/*
+1.设置各个错误处理信号的处理函数。
+2.createSharedObjects初始化shared全局变量上面的各个字符串成员。
+3.调整打开文件数目限制。
+4.初始化epoll_create，初始化fired,events等事件结构。
+5.socket() -> bind() -> listen()，绑定监听端口。
+6.设置一个每秒触发的定时器，函数为serverCron。
+7.aeCreateFileEvent将监听fd加入epoll.
+8.scriptingInit初始化lua脚本相关的数据。
+9.bioInit初始化2个后端线程，函数为bioProcessBackgroundJobs，进行一些后台任务。
+*/
 void initServer() {
     int j;
 
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
-    setupSignalHandlers();
+    setupSignalHandlers();//设置各个信号处理回调函数，基本都是打印状态，然后退出
 
     if (server.syslog_enabled) {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-            server.syslog_facility);
+        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT, server.syslog_facility);
     }
 
     server.current_client = NULL;
@@ -1342,16 +1354,16 @@ void initServer() {
     server.unblocked_clients = listCreate();
     server.ready_keys = listCreate();
 
-    createSharedObjects();
-    adjustOpenFilesLimit();
-    server.el = aeCreateEventLoop(server.maxclients+1024);
+    createSharedObjects();//初始化shared这个大全局结构的成员。基本都是字符串
+    adjustOpenFilesLimit();//调整打开文件数目限制。如果可以的话。如果允许会设置为server.maxclients+32。否则以128步长减少直到成功。
+    server.el = aeCreateEventLoop(server.maxclients+1024);//调用epoll_create，初始化epoll相关数据结构。如果使用epoll的话。
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     if (server.port != 0) {
+		//依次调用socket() -> bind() -> listen()，绑定监听端口。从这里开始，客户端连接就可以成功了。
         server.ipfd = anetTcpServer(server.neterr,server.port,server.bindaddr);
         if (server.ipfd == ANET_ERR) {
-            redisLog(REDIS_WARNING, "Opening port %d: %s",
-                server.port, server.neterr);
+            redisLog(REDIS_WARNING, "Opening port %d: %s", server.port, server.neterr);
             exit(1);
         }
     }
@@ -1367,7 +1379,7 @@ void initServer() {
         redisLog(REDIS_WARNING, "Configured to not listen anywhere, exiting.");
         exit(1);
     }
-    for (j = 0; j < server.dbnum; j++) {
+    for (j = 0; j < server.dbnum; j++) {//初始化每个数据库
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
@@ -1405,18 +1417,19 @@ void initServer() {
     server.ops_sec_last_sample_ops = 0;
     server.unixtime = time(NULL);
     server.lastbgsave_status = REDIS_OK;
+	//增加一个定时器，没毫秒触发。用于做一些定时任务，整理任务等。
     if(aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         redisPanic("create time event failed");
         exit(1);
     }
-    if (server.ipfd > 0 && aeCreateFileEvent(server.el,server.ipfd,AE_READABLE,
-        acceptTcpHandler,NULL) == AE_ERR) redisPanic("Unrecoverable error creating server.ipfd file event.");
-    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
-        acceptUnixHandler,NULL) == AE_ERR) redisPanic("Unrecoverable error creating server.sofd file event.");
+	//将这个sockfd和unix域的监听句柄加入epoll里面。设置其回调。
+    if (server.ipfd > 0 && aeCreateFileEvent(server.el,server.ipfd,AE_READABLE, acceptTcpHandler,NULL) == AE_ERR) 
+		redisPanic("Unrecoverable error creating server.ipfd file event.");
+    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE, acceptUnixHandler,NULL) == AE_ERR) 
+		redisPanic("Unrecoverable error creating server.sofd file event.");
 
     if (server.aof_state == REDIS_AOF_ON) {
-        server.aof_fd = open(server.aof_filename,
-                               O_WRONLY|O_APPEND|O_CREAT,0644);
+        server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
             redisLog(REDIS_WARNING, "Can't open the append-only file: %s",
                 strerror(errno));
@@ -1434,9 +1447,11 @@ void initServer() {
         server.maxmemory_policy = REDIS_MAXMEMORY_NO_EVICTION;
     }
 
-    scriptingInit();
-    slowlogInit();
-    bioInit();
+    scriptingInit();//给lua用的，lua,这个东东后续好像得学习一下了，nginx也用他了。
+
+	slowlogInit();
+
+	bioInit();////初始化后端线程系统。用来关闭文件等。
 }
 
 /* Populates the Redis Command Table starting from the hard coded list
@@ -1565,9 +1580,12 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
  */
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
-{
+{//call()等函数处理完指令后，调用这里将指令加入到AOF缓冲里面，以供后续追加到AOF文件
+//如果aof_state开关打开了，并且flags职位了写入AOF文件的标志，那么久需要将本指令加入到AOF缓存去。
     if (server.aof_state != REDIS_AOF_OFF && flags & REDIS_PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
+	
+	//将这条指令发送给所有的slaves，放到其缓冲里面以待发送。就当它是一个服务端一样。
     if (flags & REDIS_PROPAGATE_REPL && listLength(server.slaves))
         replicationFeedSlaves(server.slaves,dbid,argv,argc);
 }
@@ -1582,6 +1600,7 @@ void alsoPropagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
 
 /* Call() is the core of Redis execution of a command */
 void call(redisClient *c, int flags) {
+//processCommand函数调用这里进行进行命令函数的执行。
     long long dirty, start = ustime(), duration;
 
     /* Sent the command to clients in MONITOR mode, only if the commands are
@@ -1594,7 +1613,7 @@ void call(redisClient *c, int flags) {
     }
 
     /* Call the command. */
-    redisOpArrayInit(&server.also_propagate);
+    redisOpArrayInit(&server.also_propagate);//繁殖；扩大
     dirty = server.dirty;
     c->cmd->proc(c);
     dirty = server.dirty-dirty;
@@ -1613,7 +1632,9 @@ void call(redisClient *c, int flags) {
         c->cmd->microseconds += duration;
         c->cmd->calls++;
     }
-
+//关于AOF，google之，用来写入记录文件的，可以从里面恢复redis的数据。
+//上面处理完指令后，这里需要处理一下AOF的事情了，这里面的数据子进程不知道的，所以得放到额外的缓冲区去，
+//等子进程写完之前的数据后，将这部分改动追加到后面去。
     /* Propagate the command into the AOF and replication link */
     if (flags & REDIS_CALL_PROPAGATE) {
         int flags = REDIS_PROPAGATE_NONE;
@@ -1622,23 +1643,26 @@ void call(redisClient *c, int flags) {
             flags |= REDIS_PROPAGATE_REPL;
         if (dirty)
             flags |= (REDIS_PROPAGATE_REPL | REDIS_PROPAGATE_AOF);
+		//下面将这条指令的改动广播到AOF相关代码中。以备后续在AOF日志里面追加这条改动。
         if (flags != REDIS_PROPAGATE_NONE)
             propagate(c->cmd,c->db->id,c->argv,c->argc,flags);
     }
 
+//下面的alsoPropagate函数貌似没有地方使用，估计只是提供一个API，
+//用来在处理一个指令的时候，追加几条指令，用来在正常的propagate()到AOF文件后，再额外追加几条指令。
     /* Handle the alsoPropagate() API to handle commands that want to propagate
      * multiple separated commands. */
     if (server.also_propagate.numops) {
         int j;
         redisOp *rop;
-
+//循环将这几条指令propagate到AOF队列去。
         for (j = 0; j < server.also_propagate.numops; j++) {
             rop = &server.also_propagate.ops[j];
             propagate(rop->cmd, rop->dbid, rop->argv, rop->argc, rop->target);
         }
-        redisOpArrayFree(&server.also_propagate);
+        redisOpArrayFree(&server.also_propagate);//释放，后续指令可以继续插入了。
     }
-    server.stat_numcommands++;
+    server.stat_numcommands++;//统计信息。
 }
 
 /* If this function gets called we already read a whole
@@ -1650,21 +1674,24 @@ void call(redisClient *c, int flags) {
  * other operations can be performed by the caller. Otherwise
  * if 0 is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(redisClient *c) {
+//这个函数根据c->argv[0]->ptr找到对应的命令的结构体，然后进行一系列的错误判断
+//然后调用call()等函数进入去调用对应命令的处理函数。
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
      * a regular command proc. */
     if (!strcasecmp(c->argv[0]->ptr,"quit")) {
         addReply(c,shared.ok);
-        c->flags |= REDIS_CLOSE_AFTER_REPLY;
+        c->flags |= REDIS_CLOSE_AFTER_REPLY;//标志即将推出
         return REDIS_ERR;
     }
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
+     //查找server.commands哈希表里面的命令，所有命令都在这里redisCommandTable
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
-    if (!c->cmd) {
-        flagTransaction(c);
+    if (!c->cmd) {//非法指令
+        flagTransaction(c);//标记这个链接为错误状态
         addReplyErrorFormat(c,"unknown command '%s'",
             (char*)c->argv[0]->ptr);
         return REDIS_OK;
@@ -1767,10 +1794,12 @@ int processCommand(redisClient *c) {
     if (c->flags & REDIS_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
-    {
+    {//如果是muti命令模式，并且处理函数不是exec,muti,discard,watch，
+    //则直接调用queueMultiCommand。所有命令都在这里redisCommandTable
         queueMultiCommand(c);
         addReply(c,shared.queued);
     } else {
+    //调用call去处理实际的命令函数，processCommand只是进行了一些错误判断、
         call(c,REDIS_CALL_FULL);
         if (listLength(server.ready_keys))
             handleClientsBlockedOnLists();
@@ -2484,6 +2513,7 @@ int linuxOvercommitMemoryValue(void) {
 }
 
 void linuxOvercommitMemoryWarning(void) {
+	//看看物理内存是否够用。参考这里http://hi.baidu.com/bbwnphmkpqbekyd/item/33821c0ea574963aa2332a64
     if (linuxOvercommitMemoryValue() == 0) {
         redisLog(REDIS_WARNING,"WARNING overcommit_memory is set to 0! Background save may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.");
     }
@@ -2550,14 +2580,8 @@ void redisAsciiArt(void) {
 
     if (server.sentinel_mode) mode = "sentinel";
 
-    snprintf(buf,1024*16,ascii_logo,
-        REDIS_VERSION,
-        redisGitSHA1(),
-        strtol(redisGitDirty(),NULL,10) > 0,
-        (sizeof(long) == 8) ? "64" : "32",
-        mode, server.port,
-        (long) getpid()
-    );
+    snprintf(buf,1024*16,ascii_logo, REDIS_VERSION, redisGitSHA1(), strtol(redisGitDirty(),NULL,10) > 0,
+        (sizeof(long) == 8) ? "64" : "32", mode, server.port,  (long) getpid());
     redisLogRaw(REDIS_NOTICE|REDIS_LOG_RAW,buf);
     zfree(buf);
 }
@@ -2569,7 +2593,8 @@ static void sigtermHandler(int sig) {
     server.shutdown_asap = 1;
 }
 
-void setupSignalHandlers(void) {
+void setupSignalHandlers(void) {//设置相关的一些错误处理信号函数，一般都是打印一下日志，相关的现场，然后退出。
+	//设置SIGTERM信号，用来终止进程，处理软件终止信号
     struct sigaction act;
 
     /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
@@ -2583,9 +2608,11 @@ void setupSignalHandlers(void) {
     sigemptyset(&act.sa_mask);
     act.sa_flags = SA_NODEFER | SA_RESETHAND | SA_SIGINFO;
     act.sa_sigaction = sigsegvHandler;
-    sigaction(SIGSEGV, &act, NULL);
-    sigaction(SIGBUS, &act, NULL);
+    sigaction(SIGSEGV, &act, NULL);// SIGSEGV 试图访问未分配给自己的内存, 或试图往没有写权限的内存地址写数据. 
+    sigaction(SIGBUS, &act, NULL);//SIGBUS   建立CORE文件       总线错误
+    //SIGFPE 在发生致命的算术运算错误时发出. 不仅包括浮点运算错误, 还包括溢出及除数为0等其它所有的算术的错误.
     sigaction(SIGFPE, &act, NULL);
+	//SIGILL 执行了非法指令. 通常是因为可执行文件本身出现错误, 或者试图执行数据段. 堆栈溢出时也有可能产生这个信号. 
     sigaction(SIGILL, &act, NULL);
 #endif
     return;
@@ -2622,8 +2649,7 @@ void loadDataFromDisk(void) {
 }
 
 void redisOutOfMemoryHandler(size_t allocation_size) {
-    redisLog(REDIS_WARNING,"Out Of Memory allocating %zu bytes!",
-        allocation_size);
+    redisLog(REDIS_WARNING,"Out Of Memory allocating %zu bytes!", allocation_size);
     redisPanic("Redis aborting for OUT OF MEMORY");
 }
 
@@ -2631,13 +2657,15 @@ int main(int argc, char **argv) {
     struct timeval tv;
 
     /* We need to initialize our libraries, and the server configuration. */
-    zmalloc_enable_thread_safeness();
+    zmalloc_enable_thread_safeness();//就设置了一个变量:zmalloc_thread_safe = 1;
+    //内存分配错误处理，当无法得到需要的内存量时，会调用redisOutOfMemoryHandler函数，后者会让程序core的
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
+	//简单字符串查找有没有--sentinel相关的选项，如果有返回1。关于sentinel，参考http://redis.io/topics/sentinel
     server.sentinel_mode = checkForSentinelMode(argc,argv);
-    initServerConfig();
+    initServerConfig();//纯初始化redisServer server这个巨型结构的成员，没有实际动作。
 
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
@@ -2649,7 +2677,7 @@ int main(int argc, char **argv) {
 
     if (argc >= 2) {
         int j = 1; /* First option to parse in argv[] */
-        sds options = sdsempty();
+        sds options = sdsempty();//获取一个空字符串。
         char *configfile = NULL;
 
         /* Handle special options --help and --version */
@@ -2669,16 +2697,16 @@ int main(int argc, char **argv) {
         }
 
         /* First argument is the config file name? */
-        if (argv[j][0] != '-' || argv[j][1] != '-')
+        if (argv[j][0] != '-' || argv[j][1] != '-')//第一个参数的第一个字符或第二个字符不为-，就认为是个配置文件。
             configfile = argv[j++];
         /* All the other options are parsed and conceptually appended to the
          * configuration file. For instance --port 6380 will generate the
          * string "port 6380\n" to be parsed after the actual file name
          * is parsed, if any. */
-        while(j != argc) {
+        while(j != argc) {//将除文件名之为的参数都当配置项存入options。待会追加到文件里面。
             if (argv[j][0] == '-' && argv[j][1] == '-') {
                 /* Option name */
-                if (sdslen(options)) options = sdscat(options,"\n");
+                if (sdslen(options)) options = sdscat(options,"\n");//在options后面追加:\n name value
                 options = sdscat(options,argv[j]+2);
                 options = sdscat(options," ");
             } else {
@@ -2689,21 +2717,26 @@ int main(int argc, char **argv) {
             j++;
         }
         resetServerSaveParams();
-        loadServerConfig(configfile,options);
-        sdsfree(options);
+        loadServerConfig(configfile,options);//解析配置文件
+        sdsfree(options);//参数解析完成。结尾释放options
     } else {
         redisLog(REDIS_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], server.sentinel_mode ? "sentinel" : "redis");
     }
+	// fork一下进入守护模式
     if (server.daemonize) daemonize();
+
+	//打开监听端口，unix域，初始化数据库等。监听端口也加入epoll了，下面可以监听了。
+	//创建后台线程bioInit，运行一些后台的定时任务。
     initServer();
+	
     if (server.daemonize) createPidFile();
-    redisAsciiArt();
+    redisAsciiArt();//打印那神奇的assic logo，曰art
 
     if (!server.sentinel_mode) {
         /* Things only needed when not running in Sentinel mode. */
         redisLog(REDIS_WARNING,"Server started, Redis version " REDIS_VERSION);
     #ifdef __linux__
-        linuxOvercommitMemoryWarning();
+        linuxOvercommitMemoryWarning();//如果物理内存不怎么够用，打印个日志。
     #endif
         loadDataFromDisk();
         if (server.ipfd > 0)
@@ -2717,8 +2750,8 @@ int main(int argc, char **argv) {
         redisLog(REDIS_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
-    aeSetBeforeSleepProc(server.el,beforeSleep);
-    aeMain(server.el);
+    aeSetBeforeSleepProc(server.el, beforeSleep);//就一句:eventLoop->beforesleep = beforesleep;每次epoll等待之前会调用这个函数。
+    aeMain(server.el);//进入while循环，不断监听事件，并处理。
     aeDeleteEventLoop(server.el);
     return 0;
 }

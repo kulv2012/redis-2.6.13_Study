@@ -416,7 +416,7 @@ void _redisAssertWithInfo(redisClient *c, robj *o, char *estr, char *file, int l
 }
 
 void _redisPanic(char *msg, char *file, int line) {
-    bugReportStart();
+    bugReportStart();//打印一条日志。
     redisLog(REDIS_WARNING,"------------------------------------------------");
     redisLog(REDIS_WARNING,"!!! Software Failure. Press left mouse button to continue");
     redisLog(REDIS_WARNING,"Guru Meditation: %s #%s:%d",msg,file,line);
@@ -424,13 +424,12 @@ void _redisPanic(char *msg, char *file, int line) {
     redisLog(REDIS_WARNING,"(forcing SIGSEGV in order to print the stack trace)");
 #endif
     redisLog(REDIS_WARNING,"------------------------------------------------");
-    *((char*)-1) = 'x';
+    *((char*)-1) = 'x';//然后写一个非法字节，让程序core掉···神一样的。
 }
 
-void bugReportStart(void) {
+void bugReportStart(void) {//这个函数没有线程安全问题么?虽然只是打印条日志。
     if (server.bug_report_start == 0) {
-        redisLog(REDIS_WARNING,
-            "\n\n=== REDIS BUG REPORT START: Cut & paste starting from here ===");
+        redisLog(REDIS_WARNING, "\n\n=== REDIS BUG REPORT START: Cut & paste starting from here ===");
         server.bug_report_start = 1;
     }
 }
@@ -608,13 +607,12 @@ void logRegisters(ucontext_t *uc) {
 
 /* Logs the stack trace using the backtrace() call. This function is designed
  * to be called from signal handlers safely. */
-void logStackTrace(ucontext_t *uc) {
+void logStackTrace(ucontext_t *uc) {//打印堆栈信息。
     void *trace[100];
     int trace_size = 0, fd;
 
     /* Open the log file in append mode. */
-    fd = server.logfile ?
-        open(server.logfile, O_APPEND|O_CREAT|O_WRONLY, 0644) :
+    fd = server.logfile ? open(server.logfile, O_APPEND|O_CREAT|O_WRONLY, 0644) :
         STDOUT_FILENO;
     if (fd == -1) return;
 
@@ -677,11 +675,8 @@ void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
     REDIS_NOTUSED(info);
 
     bugReportStart();
-    redisLog(REDIS_WARNING,
-        "    Redis %s crashed by signal: %d", REDIS_VERSION, sig);
-    redisLog(REDIS_WARNING,
-        "    Failed assertion: %s (%s:%d)", server.assert_failed,
-                        server.assert_file, server.assert_line);
+    redisLog(REDIS_WARNING, "    Redis %s crashed by signal: %d", REDIS_VERSION, sig);
+    redisLog(REDIS_WARNING,  "    Failed assertion: %s (%s:%d)", server.assert_failed, server.assert_file, server.assert_line);
 
     /* Log the stack trace */
     redisLog(REDIS_WARNING, "--- STACK TRACE");
@@ -690,8 +685,7 @@ void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
     /* Log INFO and CLIENT LIST */
     redisLog(REDIS_WARNING, "--- INFO OUTPUT");
     infostring = genRedisInfoString("all");
-    infostring = sdscatprintf(infostring, "hash_init_value: %u\n",
-        dictGetHashFunctionSeed());
+    infostring = sdscatprintf(infostring, "hash_init_value: %u\n", dictGetHashFunctionSeed());
     redisLogRaw(REDIS_WARNING, infostring);
     redisLog(REDIS_WARNING, "--- CLIENT LIST OUTPUT");
     clients = getAllClientsInfoString();

@@ -323,7 +323,7 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len) {
     /* Use a backlog of 512 entries. We pass 511 to the listen() call because
      * the kernel does: backlogsize = roundup_pow_of_two(backlogsize + 1);
      * which will thus give us a backlog of 512 entries */
-    if (listen(s, 511) == -1) {
+    if (listen(s, 511) == -1) {//backlog竟然是写死的。怎么不弄成可配置呢。
         anetSetError(err, "listen: %s", strerror(errno));
         close(s);
         return ANET_ERR;
@@ -332,10 +332,12 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len) {
 }
 
 int anetTcpServer(char *err, int port, char *bindaddr)
-{
+{//socket() -> bind() -> listen().调用这三个函数，绑定一个端口，监听端口。这样客户端的连接就已经可以进来了。
+//为什么不等着load完数据再打开呢?不然上线的时候会瞬间累积很多连接，卡在那的。容易导致backlog满。
     int s;
     struct sockaddr_in sa;
 
+	//socket的包装函数，还设置了SO_REUSEADDR。新建一个sock
     if ((s = anetCreateSocket(err,AF_INET)) == ANET_ERR)
         return ANET_ERR;
 
@@ -348,6 +350,7 @@ int anetTcpServer(char *err, int port, char *bindaddr)
         close(s);
         return ANET_ERR;
     }
+	//下面就调用了bind，listen函数，其他的没有了。
     if (anetListen(err,s,(struct sockaddr*)&sa,sizeof(sa)) == ANET_ERR)
         return ANET_ERR;
     return s;
@@ -376,9 +379,9 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     while(1) {
         fd = accept(s,sa,len);
         if (fd == -1) {
-            if (errno == EINTR)
+            if (errno == EINTR)//如果被中断了，继续accept
                 continue;
-            else {
+            else {//否则是错误，直接返回。
                 anetSetError(err, "accept: %s", strerror(errno));
                 return ANET_ERR;
             }
@@ -389,9 +392,11 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
 }
 
 int anetTcpAccept(char *err, int s, char *ip, int *port) {
+	//acceptTcpHandler调用这里，用来接受一个客户端的连接。返回客户端IP,PORT，以及新fd
     int fd;
     struct sockaddr_in sa;
     socklen_t salen = sizeof(sa);
+	//简单调用accept函数接收一个连接，返回fd
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == ANET_ERR)
         return ANET_ERR;
 

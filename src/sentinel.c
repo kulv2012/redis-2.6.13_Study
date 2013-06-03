@@ -395,7 +395,7 @@ void initSentinel(void) {
      * the SENTINEL command. */
     dictEmpty(server.commands);
     for (j = 0; j < sizeof(sentinelcmds)/sizeof(sentinelcmds[0]); j++) {
-        int retval;
+        int retval;//初始化服务器的命令数组，变为字典结构。
         struct redisCommand *cmd = sentinelcmds+j;
 
         retval = dictAdd(server.commands, sdsnew(cmd->name), cmd);

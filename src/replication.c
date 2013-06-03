@@ -40,14 +40,16 @@
 /* ---------------------------------- MASTER -------------------------------- */
 
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
+//将这条指令发送给所有的slaves，放到其缓冲里面以待发送。
     listNode *ln;
     listIter li;
     int j;
 
-    listRewind(slaves,&li);
+    listRewind(slaves,&li);//获取slaves的第一个节点
     while((ln = listNext(&li))) {
         redisClient *slave = ln->value;
 
+//下面不发送给这个slave，那么数据怎么办?REDIS_REPL_WAIT_BGSAVE_START是什么
         /* Don't feed slaves that are still waiting for BGSAVE to start */
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
 
@@ -64,12 +66,13 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
                 selectcmd = createObject(REDIS_STRING,
                     sdscatprintf(sdsempty(),"select %d\r\n",dictid));
             }
-            addReply(slave,selectcmd);
+            addReply(slave,selectcmd);//追加一条选择db的指令给当前这个slave
             decrRefCount(selectcmd);
             slave->slaveseldb = dictid;
         }
-        addReplyMultiBulkLen(slave,argc);
-        for (j = 0; j < argc; j++) addReplyBulk(slave,argv[j]);
+        addReplyMultiBulkLen(slave,argc);//增加参数数目指令
+        for (j = 0; j < argc; j++) //一个个将参数追加到slave上面去。
+			addReplyBulk(slave,argv[j]);
     }
 }
 
@@ -115,6 +118,7 @@ void replicationFeedMonitors(redisClient *c, list *monitors, int dictid, robj **
 }
 
 void syncCommand(redisClient *c) {
+	//响应redis的sync指令
     /* ignore SYNC if already slave or in monitor mode */
     if (c->flags & REDIS_SLAVE) return;
 

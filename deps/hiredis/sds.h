@@ -37,8 +37,8 @@
 typedef char *sds;
 
 struct sdshdr {
-    int len;
-    int free;
+    int len;//实际字符串长度。会不断更新的，不一定等于字符串总长度。
+    int free;//字符串空闲的长度。每次更新的时候，会更新这个字段。要求字符串总长度，可以随时用len+free
     char buf[];
 };
 

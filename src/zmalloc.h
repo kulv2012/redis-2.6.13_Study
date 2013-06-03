@@ -34,6 +34,12 @@
 /* Double expansion needed for stringification of macro values. */
 #define __xstr(s) __str(s)
 #define __str(s) #s
+/*
+关于HAVE_MALLOC_SIZE 和used_memory:
+如果使用了google的tcmalloc或者在MAC平台下，内存分配库里面包含了计算依据分配的空间大小的函数，分别为tc_malloc_size和malloc_size，所以就不需要单独分配一段空间记录大小了。
+但是linux和sun平台则没有记录这些函数。对于linux，使用sizeof(size_t)定长字段记录；对于sun os，使用sizeof(long long)定长字段记录。也也就是PREFIX_SIZE 宏。
+一般为sizeof(size_t)字节，32位平台为4位，64位平台为8位长度。用来记录本块数据的大小。每次用户需要size字节的时候，会malloc(size+PREFIX_SIZE)字节数据
+*/
 
 #if defined(USE_TCMALLOC)
 #define ZMALLOC_LIB ("tcmalloc-" __xstr(TC_VERSION_MAJOR) "." __xstr(TC_VERSION_MINOR))

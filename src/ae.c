@@ -60,6 +60,8 @@
     #endif
 #endif
 
+/*setsize 为server.maxclients+1024，也就是最大客户端连接数，猜测是一个连接一个。
+这里的作用是: 初始化epoll_create，初始化fired,events等事件结构。*/
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
@@ -75,10 +77,10 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->stop = 0;
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
-    if (aeApiCreate(eventLoop) == -1) goto err;
+    if (aeApiCreate(eventLoop) == -1) goto err;//调用epoll_create一个句柄，分配wait时的返回事件集合数组。
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
-    for (i = 0; i < setsize; i++)
+    for (i = 0; i < setsize; i++)//标记所有的setsize槽位为空，也就是这个槽位不在epoll的监听事件集合里面。
         eventLoop->events[i].mask = AE_NONE;
     return eventLoop;
 
@@ -102,14 +104,15 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
-int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
-        aeFileProc *proc, void *clientData)
-{
+int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,  aeFileProc *proc, void *clientData)
+{//将参数fd加入epoll中，并保存相关回调，数据到eventLoop->events[fd]中。到时候可以根据fd取得数据。
+//proc 为acceptTcpHandler 或者如果是unix域就是acceptUnixHandler
+//客户端连接会设置为readQueryFromClient，用来读取客户端的query.
     if (fd >= eventLoop->setsize) {
         errno = ERANGE;
         return AE_ERR;
     }
-    aeFileEvent *fe = &eventLoop->events[fd];
+    aeFileEvent *fe = &eventLoop->events[fd];//直接拿fd当下标获取数组。
 
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
@@ -171,9 +174,8 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
 }
 
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
-        aeTimeProc *proc, void *clientData,
-        aeEventFinalizerProc *finalizerProc)
-{
+	aeTimeProc *proc, void *clientData, aeEventFinalizerProc *finalizerProc)
+{//在定时器事件链表中增加一个定时器。貌似比nginx性能差多了。
     long long id = eventLoop->timeEventNextId++;
     aeTimeEvent *te;
 
@@ -184,13 +186,13 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
-    te->next = eventLoop->timeEventHead;
+    te->next = eventLoop->timeEventHead;//链接到链表头部。
     eventLoop->timeEventHead = te;
     return id;
 }
 
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
-{
+{//删除一个定时器事件，回调其finalizerProc如果有的话。
     aeTimeEvent *te, *prev = NULL;
 
     te = eventLoop->timeEventHead;
@@ -226,11 +228,9 @@ static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
 {
     aeTimeEvent *te = eventLoop->timeEventHead;
     aeTimeEvent *nearest = NULL;
-
+//扫描一遍eventLoop->timeEventHead定时器列表，找到其中最快触发的定时器。返回其指针。
     while(te) {
-        if (!nearest || te->when_sec < nearest->when_sec ||
-                (te->when_sec == nearest->when_sec &&
-                 te->when_ms < nearest->when_ms))
+        if (!nearest || te->when_sec < nearest->when_sec || (te->when_sec == nearest->when_sec && te->when_ms < nearest->when_ms))
             nearest = te;
         te = te->next;
     }
@@ -239,6 +239,7 @@ static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
 
 /* Process time events */
 static int processTimeEvents(aeEventLoop *eventLoop) {
+//循环判断eventLoop->timeEventHead链表的事件是否到达时间，如果到了就调用其timeProc回调。
     int processed = 0;
     aeTimeEvent *te;
     long long maxId;
@@ -255,10 +256,13 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
     if (now < eventLoop->lastTime) {
         te = eventLoop->timeEventHead;
         while(te) {
-            te->when_sec = 0;
+            te->when_sec = 0;//强制设置超时时间为0秒
             te = te->next;
         }
     }
+	//如上面注释所言，这里记录上一次进来的时间，用来判断是否系统时间被手动修改过。
+	//如果手动修改过时间，并且修改的时间调后了，比如调为昨天的时间了，
+	//那么这里强制把所有定时器的触发时间设为0而触发之。理由为: 早运行定时器总比往后延迟一天要好。
     eventLoop->lastTime = now;
 
     te = eventLoop->timeEventHead;
@@ -267,14 +271,17 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
         long now_sec, now_ms;
         long long id;
 
-        if (te->id > maxId) {
+        if (te->id > maxId) {//id大于最大的，肯定不是有效的。
             te = te->next;
             continue;
         }
+		//这个获取时间的函数在循环里面，是为了避免某个回调函数占用太多时间吧，那你怎么也处理不了之前的事件。
+		//放外面应该也可以。不对，看下面if里面最后一行，te = eventLoop->timeEventHead;
+		//也就是只要处理了一个定时器，那么重新从头开始处理。
         aeGetTime(&now_sec, &now_ms);
         if (now_sec > te->when_sec ||
             (now_sec == te->when_sec && now_ms >= te->when_ms))
-        {
+        {//超时了，回调其函数。用te->clientData参数。
             int retval;
 
             id = te->id;
@@ -294,8 +301,9 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
              * deletion (putting references to the nodes to delete into
              * another linked list). */
             if (retval != AE_NOMORE) {
+				//注意返回的retval如果部位NOMORE，那么就等于下一次触发的事件距离。milliseconds
                 aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
-            } else {
+            } else {//不需要了，删除之
                 aeDeleteTimeEvent(eventLoop, id);
             }
             te = eventLoop->timeEventHead;
@@ -330,22 +338,24 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
-    if (eventLoop->maxfd != -1 ||
-        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+    if (eventLoop->maxfd != -1 || ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+		//如果有fd，或者(有定时器事件并且没有DONT_WAIT不要等待标志)
         int j;
         aeTimeEvent *shortest = NULL;
         struct timeval tv, *tvp;
 
-        if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
+		
+		//扫描一遍eventLoop->timeEventHead定时器列表，找到其中最快触发的定时器。返回其指针。
+        if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))//有定时器标志，需要扫描一下。
             shortest = aeSearchNearestTimer(eventLoop);
-        if (shortest) {
+        if (shortest) {//找到了一个最近应该触发的定时器。
             long now_sec, now_ms;
 
             /* Calculate the time missing for the nearest
              * timer to fire. */
-            aeGetTime(&now_sec, &now_ms);
+            aeGetTime(&now_sec, &now_ms);//简单gettimeofday获取当前时间
             tvp = &tv;
-            tvp->tv_sec = shortest->when_sec - now_sec;
+            tvp->tv_sec = shortest->when_sec - now_sec;//计算还要多久才能触发定时器
             if (shortest->when_ms < now_ms) {
                 tvp->tv_usec = ((shortest->when_ms+1000) - now_ms)*1000;
                 tvp->tv_sec --;
@@ -354,7 +364,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
             if (tvp->tv_sec < 0) tvp->tv_sec = 0;
             if (tvp->tv_usec < 0) tvp->tv_usec = 0;
-        } else {
+        } else {//没有定时器，那么要么不等待立即返回，要么永远等待。
             /* If we have to check for events but need to return
              * ASAP because of AE_DONT_WAIT we need to set the timeout
              * to zero */
@@ -366,9 +376,12 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 tvp = NULL; /* wait forever */
             }
         }
-
+		//到这里后，tvp指向一个超时结构，代表epoll能够等待的时间。
+		//调用epoll_wait，返回可读/写的事件数目，并且将其设置到fired数组上面，下面进行实际的事件处理。
         numevents = aeApiPoll(eventLoop, tvp);
         for (j = 0; j < numevents; j++) {
+			//一个个扫描eventLoop->fired数组里面的，已经fired的连接句柄，
+			//也就是循环处理每个连接的读写事件。aeApiPoll只是返回是否有事件。
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
             int mask = eventLoop->fired[j].mask;
             int fd = eventLoop->fired[j].fd;
@@ -377,17 +390,20 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 	    /* note the fe->mask & mask & ... code: maybe an already processed
              * event removed an element that fired and we still didn't
              * processed, so we check if the event is still valid. */
-            if (fe->mask & mask & AE_READABLE) {
+            if (fe->mask & mask & AE_READABLE) {//处理读事件
                 rfired = 1;
+				//accept连接为acceptTcpHandler，initServer设置的。
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
             }
-            if (fe->mask & mask & AE_WRITABLE) {
-                if (!rfired || fe->wfileProc != fe->rfileProc)
+            if (fe->mask & mask & AE_WRITABLE) {//处理写事件。
+                if (!rfired || fe->wfileProc != fe->rfileProc)//如果没有处理可读事件 或者 读写句柄不相同，那么需要调用其函数。
                     fe->wfileProc(eventLoop,fd,fe->clientData,mask);
             }
             processed++;
         }
     }
+	
+	//循环判断eventLoop->timeEventHead链表的事件是否到达时间，如果到了就调用其timeProc回调。
     /* Check time events */
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
@@ -419,10 +435,11 @@ int aeWait(int fd, int mask, long long milliseconds) {
 
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
-    while (!eventLoop->stop) {
+    while (!eventLoop->stop) {//stop ==1 停止服务
         if (eventLoop->beforesleep != NULL)
-            eventLoop->beforesleep(eventLoop);
-        aeProcessEvents(eventLoop, AE_ALL_EVENTS);
+            eventLoop->beforesleep(eventLoop);//调用了beforeSleep函数。
+		
+        aeProcessEvents(eventLoop, AE_ALL_EVENTS);//处理各种事件。
     }
 }
 

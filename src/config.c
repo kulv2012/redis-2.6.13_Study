@@ -54,11 +54,11 @@ void resetServerSaveParams() {
     server.saveparamslen = 0;
 }
 
-void loadServerConfigFromString(char *config) {
+void loadServerConfigFromString(char *config) {//参数为读取的配置文件内容，后面追加命令行参数。
     char *err = NULL;
     int linenum = 0, totlines, i;
     sds *lines;
-
+	//将配置文件按行分割，一行行处理。
     lines = sdssplitlen(config,strlen(config),"\n",1,&totlines);
 
     for (i = 0; i < totlines; i++) {
@@ -84,7 +84,7 @@ void loadServerConfigFromString(char *config) {
             return;
         }
         sdstolower(argv[0]);
-
+		//下面是一个巨大的if-else，一个个的比较，将解析出来的值设置到server等相关变量上面。
         /* Execute config directives */
         if (!strcasecmp(argv[0],"timeout") && argc == 2) {
             server.maxidletime = atoi(argv[1]);
@@ -111,7 +111,7 @@ void loadServerConfigFromString(char *config) {
             if (errno || server.unixsocketperm > 0777) {
                 err = "Invalid socket file permissions"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"save")) {
+        } else if (!strcasecmp(argv[0],"save")) {//save <seconds> <changes>，让redis在指定时间内，如果有指定的key改动过，就写入数据库
             if (argc == 3) {
                 int seconds = atoi(argv[1]);
                 int changes = atoi(argv[2]);
@@ -120,7 +120,7 @@ void loadServerConfigFromString(char *config) {
                 }
                 appendServerSaveParams(seconds,changes);
             } else if (argc == 2 && !strcasecmp(argv[1],"")) {
-                resetServerSaveParams();
+                resetServerSaveParams();//只要有一条空的，那就全部清空其他的。
             }
         } else if (!strcasecmp(argv[0],"dir") && argc == 2) {
             if (chdir(argv[1]) == -1) {
@@ -150,8 +150,7 @@ void loadServerConfigFromString(char *config) {
                  * be able to abort just for this problem later... */
                 logfp = fopen(server.logfile,"a");
                 if (logfp == NULL) {
-                    err = sdscatprintf(sdsempty(),
-                        "Can't open the log file: %s", strerror(errno));
+                    err = sdscatprintf(sdsempty(),  "Can't open the log file: %s", strerror(errno));
                     goto loaderr;
                 }
                 fclose(logfp);
@@ -443,7 +442,7 @@ loaderr:
  * Both filename and options can be NULL, in such a case are considered
  * empty. This way loadServerConfig can be used to just load a file or
  * just load a string. */
-void loadServerConfig(char *filename, char *options) {
+void loadServerConfig(char *filename, char *options) {//按行读取参数解析，设置到server全局变量里面。没有进行其他操作
     sds config = sdsempty();
     char buf[REDIS_CONFIGLINE_MAX+1];
 
@@ -469,7 +468,7 @@ void loadServerConfig(char *filename, char *options) {
         config = sdscat(config,"\n");
         config = sdscat(config,options);
     }
-    loadServerConfigFromString(config);
+    loadServerConfigFromString(config);//仅仅解析了一下参数，设置到全局变量servers里面去、
     sdsfree(config);
 }
 

@@ -180,6 +180,7 @@
 #define REDIS_MULTI (1<<3)   /* This client is in a MULTI context */
 #define REDIS_BLOCKED (1<<4) /* The client is waiting in a blocking operation */
 #define REDIS_DIRTY_CAS (1<<5) /* Watched keys modified. EXEC will fail. */
+//客户端发送quit指令会设置为这个标志。
 #define REDIS_CLOSE_AFTER_REPLY (1<<6) /* Close after writing entire reply. */
 #define REDIS_UNBLOCKED (1<<7) /* This client was unblocked and is stored in
                                   server.unblocked_clients */
@@ -386,18 +387,21 @@ typedef struct redisClient {
     redisDb *db;
     int dictid;
     robj *name;             /* As set by CLIENT SETNAME */
-    sds querybuf;
+    sds querybuf;//客户端发送过来的数据中，还没有处理的部分。
     size_t querybuf_peak;   /* Recent (100ms or more) peak of querybuf size */
     int argc;
     robj **argv;
     struct redisCommand *cmd, *lastcmd;
-    int reqtype;
+    int reqtype;//这个客户连接的类型，是REDIS_REQ_MULTIBULK还是简单的inline协议。
+    //记录用*开头的参数数目，如果为0表示还没有读取到参数数目，下一步将读取值。
     int multibulklen;       /* number of multi bulk arguments left to read */
+	//每次处理一对参数后清空，用来标记是否读取了这个参数的长度部分，也就是第一行。
     long bulklen;           /* length of bulk argument in multi bulk request */
-    list *reply;
+    list *reply;//给客户端返回的数据部分，如果buf数组里面有东西，那就只能放到这个链表的后面了。
     unsigned long reply_bytes; /* Tot bytes of objects in reply list */
     int sentlen;
     time_t ctime;           /* Client creation time */
+	//记录这个连接的最后一次交互的时间，比如读取数据了，就更新。
     time_t lastinteraction; /* time of the last interaction, used for timeout */
     time_t obuf_soft_limit_reached_time;
     int flags;              /* REDIS_SLAVE | REDIS_MONITOR | REDIS_MULTI ... */
@@ -418,7 +422,7 @@ typedef struct redisClient {
 
     /* Response buffer */
     int bufpos;
-    char buf[REDIS_REPLY_CHUNK_BYTES];
+    char buf[REDIS_REPLY_CHUNK_BYTES];//发送给客户端的数据buf，bufpos指向第一个可以追加的位置。
 } redisClient;
 
 struct saveparam {
@@ -501,9 +505,9 @@ struct redisServer {
     /* General */
     int hz;                     /* serverCron() calls frequency in hertz */
     redisDb *db;
-    dict *commands;             /* Command table */
+    dict *commands;             /* Command table *///服务器的命令数组，比如sentinelcmds等
     dict *orig_commands;        /* Command table before command renaming. */
-    aeEventLoop *el;
+    aeEventLoop *el;//aeCreateEventLoop返回的事件循环结构，里面有epoll的fd等。
     unsigned lruclock:22;       /* Clock incrementing every minute, for LRU */
     unsigned lruclock_padding:10;
     int shutdown_asap;          /* SHUTDOWN needed ASAP */
@@ -537,6 +541,7 @@ struct redisServer {
     /* Fields used only for stats */
     time_t stat_starttime;          /* Server start time */
     long long stat_numcommands;     /* Number of processed commands */
+	//没接收一个连接，就增加计数，不算stat_rejected_conn被拒绝的
     long long stat_numconnections;  /* Number of connections received */
     long long stat_expiredkeys;     /* Number of expired keys */
     long long stat_evictedkeys;     /* Number of evicted keys (maxmemory) */
@@ -544,9 +549,11 @@ struct redisServer {
     long long stat_keyspace_misses; /* Number of failed lookups of keys */
     size_t stat_peak_memory;        /* Max used memory record */
     long long stat_fork_time;       /* Time needed to perform latest fork() */
+	//由于连接数大于server.maxclients而导致的客户端连接被关闭的数目。
     long long stat_rejected_conn;   /* Clients rejected because of maxclients */
     list *slowlog;                  /* SLOWLOG list of commands */
     long long slowlog_entry_id;     /* SLOWLOG current entry ID */
+	//如果一条指令大于这个数目，slowlogPushEntryIfNeeded函数会将其记录到server.slowlog头部
     long long slowlog_log_slower_than; /* SLOWLOG time limit (to get logged) */
     unsigned long slowlog_max_len;     /* SLOWLOG max number of items logged */
     /* The following two are used to track instantaneous "load" in terms
@@ -572,13 +579,17 @@ struct redisServer {
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
     off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
     off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
+	//标记aof文件的目前总大小。
     off_t aof_current_size;         /* AOF current size. */
     int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
     pid_t aof_child_pid;            /* PID if rewriting process */
+	//当子进程正在将内存数据dump到AOF文件去的时候，到来的修改指令都会
+	//保存到这个队列里面的每个缓存节点上面去。aofRewriteBufferAppend干的
     list *aof_rewrite_buf_blocks;   /* Hold changes during an AOF rewrite. */
     sds aof_buf;      /* AOF buffer, written before entering the event loop */
     int aof_fd;       /* File descriptor of currently selected AOF file */
     int aof_selected_db; /* Currently selected DB in AOF */
+	//如果后台正有进程在做刷新AOF的操作，我们就设置这个标志，并等待2秒，在做刷新。
     time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush */
     time_t aof_last_fsync;            /* UNIX time of last fsync() */
     time_t aof_rewrite_time_last;   /* Time used by last AOF rewrite run. */
@@ -696,7 +707,7 @@ struct redisCommand {
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
-    long long microseconds, calls;
+    long long microseconds, calls;//调用次数。
 };
 
 struct redisFunctionSym {

@@ -30,6 +30,7 @@
 
 #include "redis.h"
 #include <math.h>
+//创建一个对象，指向ptr就行。
 #include <ctype.h>
 
 robj *createObject(int type, void *ptr) {

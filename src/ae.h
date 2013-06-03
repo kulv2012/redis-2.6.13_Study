@@ -61,6 +61,11 @@ typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 /* File event structure */
 typedef struct aeFileEvent {
     int mask; /* one of AE_(READABLE|WRITABLE) */
+
+	//accept连接为acceptTcpHandler或者acceptUnixHandler，initServer函数设置的。
+	//客户端新连接accept后，设置的读句柄为readQueryFromClient，读取客户端的连接。
+	//此外还有redisAeReadEvent,readHandler,syncWithMaster
+	//给客户端发送数据是sendReplyToClient
     aeFileProc *rfileProc;
     aeFileProc *wfileProc;
     void *clientData;
@@ -86,14 +91,15 @@ typedef struct aeFiredEvent {
 /* State of an event based program */
 typedef struct aeEventLoop {
     int maxfd;   /* highest file descriptor currently registered */
+	//setsize设置为server.maxclients+1024，也就是最大客户端连接数，下面的events,fired数组数目都等于此
     int setsize; /* max number of file descriptors tracked */
-    long long timeEventNextId;
+    long long timeEventNextId;//timeEventHead中最大的有效时间时间的id。
     time_t lastTime;     /* Used to detect system clock skew */
-    aeFileEvent *events; /* Registered events */
-    aeFiredEvent *fired; /* Fired events */
-    aeTimeEvent *timeEventHead;
-    int stop;
-    void *apidata; /* This is used for polling API specific data */
+    aeFileEvent *events; /* Registered events *///用来存储有哪些fd在我里面，哪些设置进了epoll，一个槽位的下标就是fd值。
+    aeFiredEvent *fired; /* Fired events *///在epoll总只是标注了一下到底有哪些事件触发了。
+    aeTimeEvent *timeEventHead;//定时器的链表，里面记录了一个定时器什么时候触发。都懒得用红黑树的。
+    int stop;//aeMain函数循环的跳出条件。aeStop设置为1从而停止服务。
+    void *apidata; /* This is used for polling API specific data *///这个就是epoll的fd,events结构，类型为aeApiState。
     aeBeforeSleepProc *beforesleep;
 } aeEventLoop;
 

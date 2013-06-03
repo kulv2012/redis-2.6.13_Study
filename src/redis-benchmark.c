@@ -135,6 +135,7 @@ static void freeAllClients(void) {
 }
 
 static void resetClient(client c) {
+//关闭读写事件epoll，关注可写事件。设置回调为writeHandler函数吧数据发送出去。
     aeDeleteFileEvent(config.el,c->context->fd,AE_WRITABLE);
     aeDeleteFileEvent(config.el,c->context->fd,AE_READABLE);
     aeCreateFileEvent(config.el,c->context->fd,AE_WRITABLE,writeHandler,c);

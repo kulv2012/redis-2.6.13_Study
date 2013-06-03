@@ -36,10 +36,11 @@
 #include "sds.h"
 #include "zmalloc.h"
 
+//申请一个字符串，初始值为init,长度为initLen。
 sds sdsnewlen(const void *init, size_t initlen) {
     struct sdshdr *sh;
 
-    if (init) {
+    if (init) {//如果初始字符串存在，则不需要初始化，待会会memcpy的。
         sh = zmalloc(sizeof(struct sdshdr)+initlen+1);
     } else {
         sh = zcalloc(sizeof(struct sdshdr)+initlen+1);
@@ -47,9 +48,9 @@ sds sdsnewlen(const void *init, size_t initlen) {
     if (sh == NULL) return NULL;
     sh->len = initlen;
     sh->free = 0;
-    if (initlen && init)
+    if (initlen && init)//如果参数上面有大小，就拷贝这些初始字符串。
         memcpy(sh->buf, init, initlen);
-    sh->buf[initlen] = '\0';
+    sh->buf[initlen] = '\0';//结尾
     return (char*)sh->buf;
 }
 
@@ -71,16 +72,16 @@ void sdsfree(sds s) {
     zfree(s-sizeof(struct sdshdr));
 }
 
-void sdsupdatelen(sds s) {
-    struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
-    int reallen = strlen(s);
-    sh->free += (sh->len-reallen);
+void sdsupdatelen(sds s) {//更新字符串的长度信息。s为字符串数据的开头，前面还有个sdshdr头部的，丫的
+    struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));//获取字符串前面的头部信息。那得小心点，别把裸字符串传过来
+    int reallen = strlen(s);//获取实际长度
+    sh->free += (sh->len-reallen);//这里为什么是+= ?不是=等于?因为这个free是不断的累加的，len也不是总申请的内存大小，也会不断设置为实际字符串长度、
     sh->len = reallen;
 }
 
 void sdsclear(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
-    sh->free += sh->len;
+    sh->free += sh->len;//直接标记为全部空，也就置空了字符串
     sh->len = 0;
     sh->buf[0] = '\0';
 }
@@ -91,19 +92,19 @@ void sdsclear(sds s) {
  * 
  * Note: this does not change the *size* of the sds string as returned
  * by sdslen(), but only the free buffer space we have. */
-sds sdsMakeRoomFor(sds s, size_t addlen) {
+sds sdsMakeRoomFor(sds s, size_t addlen) {//上面注释说明了，这个函数试图扩展s字符串的空闲内存。以供后面使用。
     struct sdshdr *sh, *newsh;
-    size_t free = sdsavail(s);
+    size_t free = sdsavail(s);//获取free字段代表的空闲大小。
     size_t len, newlen;
 
-    if (free >= addlen) return s;
+    if (free >= addlen) return s;//如果足够就立即返回原字符串指针，否则需要扩充字符串大小。relloc.
     len = sdslen(s);
     sh = (void*) (s-(sizeof(struct sdshdr)));
     newlen = (len+addlen);
-    if (newlen < SDS_MAX_PREALLOC)
-        newlen *= 2;
+    if (newlen < SDS_MAX_PREALLOC)//(1024*1024)=1M，
+        newlen *= 2;//成倍增长，直到增长到快2M的时候，
     else
-        newlen += SDS_MAX_PREALLOC;
+        newlen += SDS_MAX_PREALLOC;//如果目标大小大于1M了都，那就一步步每次增加1M，不指数增加了，怕浪费。
     newsh = zrealloc(sh, sizeof(struct sdshdr)+newlen+1);
     if (newsh == NULL) return NULL;
 
@@ -114,9 +115,8 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
 /* Reallocate the sds string so that it has no free space at the end. The
  * contained string remains not altered, but next concatenation operations
  * will require a reallocation. */
-sds sdsRemoveFreeSpace(sds s) {
+sds sdsRemoveFreeSpace(sds s) {//跟上面相反，这里压缩字符串内存，将后面空闲的释放掉。
     struct sdshdr *sh;
-
     sh = (void*) (s-(sizeof(struct sdshdr)));
     sh = zrealloc(sh, sizeof(struct sdshdr)+sh->len+1);
     sh->free = 0;
@@ -223,7 +223,7 @@ sds sdscpy(sds s, const char *t) {
 }
 
 sds sdscatvprintf(sds s, const char *fmt, va_list ap) {
-    va_list cpy;
+    va_list cpy;//将可变参数代表的新字符串，追加到s后面。有意思的是下面的while,由于不知道目标字符串可能有多大，所以从16开始指数增加去试探。
     char *buf, *t;
     size_t buflen = 16;
 
