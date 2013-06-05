@@ -353,6 +353,11 @@ long long mstime(void) {
  * exit(), because the latter may interact with the same file objects used by
  * the parent process. However if we are testing the coverage normal exit() is
  * used in order to obtain the right coverage information. */
+ /*exit()在结束调用它的进程之前，还要进行如下步骤：
+1.cleanup()；
+2.在atexit()注册的函数；
+3.清理其他应用程序设置的数据。
+*/
 void exitFromChild(int retcode) {
 #ifdef COVERAGE_TEST
     exit(retcode);
@@ -963,7 +968,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * a BGSAVE was in progress. */
     if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
         server.aof_rewrite_scheduled)
-    {
+    {//当前没有aof进程和rdb进程在跑，并且在其他地方挂载了aof_rewrite_scheduled，说明需要进行aof了。
+    //比如用户发送bgrewriteaof命令时，bgrewriteaofCommand函数会设置这个。标志。
         rewriteAppendOnlyFileBackground();
     }
 
@@ -979,8 +985,13 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
 
             if (pid == server.rdb_child_pid) {
+				//把数据保存到磁盘上去，跟AOF的区别是AOF会不断的追加改动到文件。
+				//RDB只会将快照保存，并且通知其他slave
                 backgroundSaveDoneHandler(exitcode,bysignal);
             } else if (pid == server.aof_child_pid) {
+            //退出的进程的pid为aof日志的进程，也就是在rewriteAppendOnlyFileBackground这里fork创建的进程
+            //用户敲入这样的命令可以出发AOF文件重写 config set appendonly yes
+            //从而在定时任务中检测到AOF进程已经写完快照并退出，从而下面必须写在此期间写入的数据到文件。
                 backgroundRewriteDoneHandler(exitcode,bysignal);
             } else {
                 redisLog(REDIS_WARNING,
@@ -1018,8 +1029,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
              server.aof_rewrite_perc &&
              server.aof_current_size > server.aof_rewrite_min_size)
          {
-            long long base = server.aof_rewrite_base_size ?
-                            server.aof_rewrite_base_size : 1;
+            long long base = server.aof_rewrite_base_size ? server.aof_rewrite_base_size : 1;
             long long growth = (server.aof_current_size*100/base) - 100;
             if (growth >= server.aof_rewrite_perc) {
                 redisLog(REDIS_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);

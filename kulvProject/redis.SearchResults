@@ -1,8 +1,5 @@
----- bio_jobs Matches (7 in 1 files) ----
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):static list *bio_jobs[REDIS_BIO_NUM_OPS];
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):        bio_jobs[j] = listCreate();
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):    listAddNodeTail(bio_jobs[type],job);//挂了一个这样的job到这里。
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):        if (listLength(bio_jobs[type]) == 0) {
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):        ln = listFirst(bio_jobs[type]);//获取到了一个任务，处理值。
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):        listDelNode(bio_jobs[type],ln);
-Bio.c (h:\dropbox\github\redis-2.6.13_study\src):    ln = listFirst(bio_jobs[type]);
+---- REDIS_AOF_WAIT_REWRITE Matches (4 in 2 files) ----
+Aof.c (h:\dropbox\github\redis-2.6.13_study\src):    server.aof_state = REDIS_AOF_WAIT_REWRITE;
+Aof.c (h:\dropbox\github\redis-2.6.13_study\src):        if (server.aof_state == REDIS_AOF_WAIT_REWRITE)
+Aof.c (h:\dropbox\github\redis-2.6.13_study\src):    if (server.aof_state == REDIS_AOF_WAIT_REWRITE)
+Redis.h (h:\dropbox\github\redis-2.6.13_study\src):#define REDIS_AOF_WAIT_REWRITE 2    /* AOF waits rewrite to start appending */

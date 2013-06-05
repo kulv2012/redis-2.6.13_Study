@@ -521,7 +521,7 @@ dictIterator *dictGetIterator(dict *d)
 dictIterator *dictGetSafeIterator(dict *d) {
     dictIterator *i = dictGetIterator(d);
 
-    i->safe = 1;
+    i->safe = 1;//标记为1,干嘛的呢? 
     return i;
 }
 

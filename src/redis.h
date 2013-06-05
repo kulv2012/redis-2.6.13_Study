@@ -581,10 +581,14 @@ struct redisServer {
     off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
 	//标记aof文件的目前总大小。
     off_t aof_current_size;         /* AOF current size. */
+	 //已经有后台进程在写数据库文件保存，那么aof_rewrite_scheduled设置为1，这样serverCron
+    //里面会判断，如果为1就会调用rewriteAppendOnlyFileBackground启动AOF重新rewrite的动作。
+    //aof_rewrite_scheduled相当于标记一下，待会我需要做后台重新aof rewrite
     int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
     pid_t aof_child_pid;            /* PID if rewriting process */
-	//当子进程正在将内存数据dump到AOF文件去的时候，到来的修改指令都会
+	//当子进程正在将内存数据dump到AOF文件去的时候，fork之后后面到来的修改指令都会
 	//保存到这个队列里面的每个缓存节点上面去。aofRewriteBufferAppend干的
+	//stopAppendOnly会清空这个列表。
     list *aof_rewrite_buf_blocks;   /* Hold changes during an AOF rewrite. */
     sds aof_buf;      /* AOF buffer, written before entering the event loop */
     int aof_fd;       /* File descriptor of currently selected AOF file */

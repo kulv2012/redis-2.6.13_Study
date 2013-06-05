@@ -34,6 +34,7 @@ unsigned long long bioPendingJobsOfType(int type);
 void bioWaitPendingJobsLE(int type, unsigned long long num);
 time_t bioOlderJobOfType(int type);
 
+//下面这2个动作比较耗时，所以需要放到后台进行，bioInit会创建后端进程做的。
 /* Background job opcodes */
 #define REDIS_BIO_CLOSE_FILE    0 /* Deferred close(2) syscall. */
 #define REDIS_BIO_AOF_FSYNC     1 /* Deferred AOF fsync. */

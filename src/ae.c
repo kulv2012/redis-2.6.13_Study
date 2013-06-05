@@ -393,6 +393,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             if (fe->mask & mask & AE_READABLE) {//处理读事件
                 rfired = 1;
 				//accept连接为acceptTcpHandler，initServer设置的。
+				//设置的读句柄为readQueryFromClient，读取客户端的连接。
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
             }
             if (fe->mask & mask & AE_WRITABLE) {//处理写事件。

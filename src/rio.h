@@ -75,6 +75,8 @@ typedef struct _rio rio;
 
 static inline size_t rioWrite(rio *r, const void *buf, size_t len) {
     if (r->update_cksum) r->update_cksum(r,buf,len);
+	//rioFileIO里面可以看出，write函数为rioFileWrite函数。
+	//调用fwrite带缓存的写入数据
     return r->write(r,buf,len);
 }
 

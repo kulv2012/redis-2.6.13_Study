@@ -90,7 +90,7 @@ void *bioProcessBackgroundJobs(void *arg);
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 
 /* Initialize the background system, spawning the thread. */
-void bioInit(void) {//初始化后端线程系统。用来关闭文件等。
+void bioInit(void) {//初始化后端线程系统。用来关闭文件，或者调用FSYNC函数刷文件等。
     pthread_attr_t attr;
     pthread_t thread;
     size_t stacksize;
@@ -114,9 +114,10 @@ void bioInit(void) {//初始化后端线程系统。用来关闭文件等。
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
      * responsible of. */
+     //为每一个类型的需要放到后端线程异步处理的任务分配一个线程。
     for (j = 0; j < REDIS_BIO_NUM_OPS; j++) {//配置了2个后端线程。不可配置的。
         void *arg = (void*)(unsigned long) j;
-	//创建bio后端线程。用来在后台删除文件，避免系统卡顿，将文件内容fsync到磁盘去的进程
+	//创建bio后端线程。用来在后台关闭文件，避免系统卡顿，将文件内容fsync到磁盘去的进程
         if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
             redisLog(REDIS_WARNING,"Fatal: Can't initialize Background Jobs.");
             exit(1);
@@ -139,13 +140,13 @@ void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
 }
 
 void *bioProcessBackgroundJobs(void *arg) {
-	//bioInit创建一个进程，用来刷文件。
+	//bioInit创建一个进程，用来刷文件。arg参数就是这个线程对应应该处理的任务号，用来索引bio_jobs[type]
     struct bio_job *job;
     unsigned long type = (unsigned long) arg;//实际上就是jobid。序号
     sigset_t sigset;
 
     pthread_detach(pthread_self());
-    pthread_mutex_lock(&bio_mutex[type]);
+    pthread_mutex_lock(&bio_mutex[type]);//先锁一下，待会pthread_cond_wait
     /* Block SIGALRM so we are sure that only the main thread will
      * receive the watchdog signal. */
     sigemptyset(&sigset);
@@ -158,6 +159,8 @@ void *bioProcessBackgroundJobs(void *arg) {
 
         /* The loop always starts with the lock hold. */
         if (listLength(bio_jobs[type]) == 0) {
+	//已经加锁了，进入等待bio_condvar[type]不为0，并立即解锁，等待。
+	//等其他线程pthread_cond_signal的时候，会通知这个线程，别等待了，从而再次加锁，返回。
             pthread_cond_wait(&bio_condvar[type],&bio_mutex[type]);
             continue;
         }

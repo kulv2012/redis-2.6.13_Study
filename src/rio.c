@@ -80,13 +80,16 @@ static off_t rioBufferTell(rio *r) {
 /* Returns 1 or 0 for success/failure. */
 static size_t rioFileWrite(rio *r, const void *buf, size_t len) {
     size_t retval;
-
+//调用fwrite带缓存的写入数据
     retval = fwrite(buf,len,1,r->io.file.fp);
     r->io.file.buffered += len;
 
     if (r->io.file.autosync &&
         r->io.file.buffered >= r->io.file.autosync)
-    {
+    {//如果写入的数据大于32M 了，那就fsync从内核刷到磁盘上。
+   //注意这里是fsync，不是fflush刷新，那么一个问题来了: 
+   //那如果还有数据在标准库的缓存里面，那么调用fsync就会漏掉这部分，
+   //而直接将操作系统缓存的数据刷到磁盘上。
         aof_fsync(fileno(r->io.file.fp));
         r->io.file.buffered = 0;
     }
