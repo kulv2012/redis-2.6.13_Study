@@ -40,6 +40,7 @@ void SlotToKeyDel(robj *key);
  *----------------------------------------------------------------------------*/
 
 robj *lookupKey(redisDb *db, robj *key) {
+//查找key对应的value，如果当前没有后台快照进程在倒数据，那么OK，可以更新lru时钟值。
     dictEntry *de = dictFind(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
@@ -57,7 +58,7 @@ robj *lookupKey(redisDb *db, robj *key) {
 
 robj *lookupKeyRead(redisDb *db, robj *key) {
     robj *val;
-
+//先判断是否超时，如果超时就将其删除，然后通知aof,slaves
     expireIfNeeded(db,key);
     val = lookupKey(db,key);
     if (val == NULL)
@@ -68,7 +69,10 @@ robj *lookupKeyRead(redisDb *db, robj *key) {
 }
 
 robj *lookupKeyWrite(redisDb *db, robj *key) {
+//看看这个key是否超时，如果超时了，并且也存在，那么就需要通知slave节点将其删除，
+//并且给自己的AOF文件追加一条删除指令。
     expireIfNeeded(db,key);
+//返回value，同时如果没有快照进程在倒数据，更新lru值。
     return lookupKey(db,key);
 }
 
@@ -153,7 +157,7 @@ robj *dbRandomKey(redisDb *db) {
         return keyobj;
     }
 }
-
+ 
 /* Delete a key, value, and associated expiration entry if any, from the DB */
 int dbDelete(redisDb *db, robj *key) {
     /* Deleting an entry from the expires dict will not free the sds of
@@ -466,8 +470,8 @@ long long getExpire(redisDb *db, robj *key) {
     dictEntry *de;
 
     /* No expire? return ASAP */
-    if (dictSize(db->expires) == 0 ||
-       (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
+    if (dictSize(db->expires) == 0 || (de = dictFind(db->expires,key->ptr)) == NULL)
+		return -1;
 
     /* The entry was found in the expire dict, this means it should also
      * be present in the main dict (safety check). */
@@ -501,6 +505,9 @@ void propagateExpire(redisDb *db, robj *key) {
 }
 
 int expireIfNeeded(redisDb *db, robj *key) {
+//看看这个key是否超时，如果超时了，并且也存在，那么就需要通知slave节点将其删除，
+//并且给自己的AOF文件追加一条删除指令。
+	//然后通知其他slave。
     long long when = getExpire(db,key);
 
     if (when < 0) return 0; /* No expire for this key */
@@ -524,8 +531,8 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     server.stat_expiredkeys++;
-    propagateExpire(db,key);
-    return dbDelete(db,key);
+    propagateExpire(db,key);.//增加一条删除指令给aof文件，通知slave。
+    return dbDelete(db,key);//删除KEY
 }
 
 /*-----------------------------------------------------------------------------

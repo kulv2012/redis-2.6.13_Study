@@ -1,5 +1,7 @@
----- REDIS_AOF_WAIT_REWRITE Matches (4 in 2 files) ----
-Aof.c (h:\dropbox\github\redis-2.6.13_study\src):    server.aof_state = REDIS_AOF_WAIT_REWRITE;
-Aof.c (h:\dropbox\github\redis-2.6.13_study\src):        if (server.aof_state == REDIS_AOF_WAIT_REWRITE)
-Aof.c (h:\dropbox\github\redis-2.6.13_study\src):    if (server.aof_state == REDIS_AOF_WAIT_REWRITE)
-Redis.h (h:\dropbox\github\redis-2.6.13_study\src):#define REDIS_AOF_WAIT_REWRITE 2    /* AOF waits rewrite to start appending */
+---- freeMemoryIfNeeded Matches (6 in 5 files) ----
+Config.c (l:\dropbox\github\redis-2.6.13_study\src):            freeMemoryIfNeeded();
+Networking.c (l:\dropbox\github\redis-2.6.13_study\src):/* Helper function used by freeMemoryIfNeeded() in order to flush slaves
+Redis.c (l:\dropbox\github\redis-2.6.13_study\src):        int retval = freeMemoryIfNeeded();
+Redis.c (l:\dropbox\github\redis-2.6.13_study\src):int freeMemoryIfNeeded(void) {
+Redis.h (l:\dropbox\github\redis-2.6.13_study\src):int freeMemoryIfNeeded(void);
+Scripting.c (l:\dropbox\github\redis-2.6.13_study\src):        if (freeMemoryIfNeeded() == REDIS_ERR) {

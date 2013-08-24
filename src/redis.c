@@ -590,6 +590,7 @@ void tryResizeHashTables(int dbid) {
  * The function returns 1 if some rehashing was performed, otherwise 0
  * is returned. */
 int incrementallyRehash(int dbid) {
+//databasesCron调用这里，做一毫秒的增量rehash
     /* Keys dictionary */
     if (dictIsRehashing(server.db[dbid].dict)) {
         dictRehashMilliseconds(server.db[dbid].dict,1);
@@ -857,6 +858,7 @@ void databasesCron(void) {
         /* Rehash */
         if (server.activerehashing) {
             for (j = 0; j < dbs_per_call; j++) {
+				//做1毫秒的增量rehash
                 int work_done = incrementallyRehash(rehash_db % server.dbnum);
                 rehash_db++;
                 if (work_done) {
@@ -1031,6 +1033,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
          {
             long long base = server.aof_rewrite_base_size ? server.aof_rewrite_base_size : 1;
             long long growth = (server.aof_current_size*100/base) - 100;
+			//如果AOF文件增长超过了指定百分比，那么需要自动rewrite aof文件了
+			//AOF文件增长的最大百分比是auto-aof-rewrite-percentage指令设置的。
             if (growth >= server.aof_rewrite_perc) {
                 redisLog(REDIS_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
                 rewriteAppendOnlyFileBackground();
@@ -1625,7 +1629,11 @@ void call(redisClient *c, int flags) {
     /* Call the command. */
     redisOpArrayInit(&server.also_propagate);//繁殖；扩大
     dirty = server.dirty;
+	//调用对应的命令，所有的都在这里redisCommandTable。
     c->cmd->proc(c);
+	//在proc函数里面，如果指令觉得这是一条修改的指令，那么久需要吧这条指令
+	//写到AOF文件中，因此它会增加server.dirty的值。从而在下面的时候，flag增加了AOF，REPL的标志。
+	//一般只有set接口会设置这条指令。
     dirty = server.dirty-dirty;
     duration = ustime()-start;
 
@@ -1651,6 +1659,7 @@ void call(redisClient *c, int flags) {
 
         if (c->cmd->flags & REDIS_CMD_FORCE_REPLICATION)
             flags |= REDIS_PROPAGATE_REPL;
+		//如果dirty不为0，也就是说当前这条指令是set操作，所以需要追加到AOF文件中。
         if (dirty)
             flags |= (REDIS_PROPAGATE_REPL | REDIS_PROPAGATE_AOF);
 		//下面将这条指令的改动广播到AOF相关代码中。以备后续在AOF日志里面追加这条改动。
@@ -2645,9 +2654,11 @@ int checkForSentinelMode(int argc, char **argv) {
 void loadDataFromDisk(void) {
     long long start = ustime();
     if (server.aof_state == REDIS_AOF_ON) {
+		//如果AOF打开了，那么优先从AOF文件中加载数据，因为AOF文件的数据比RDB中的数据要新。
         if (loadAppendOnlyFile(server.aof_filename) == REDIS_OK)
             redisLog(REDIS_NOTICE,"DB loaded from append only file: %.3f seconds",(float)(ustime()-start)/1000000);
     } else {
+    //否则就从RDB文件中加载数据。
         if (rdbLoad(server.rdb_filename) == REDIS_OK) {
             redisLog(REDIS_NOTICE,"DB loaded from disk: %.3f seconds",
                 (float)(ustime()-start)/1000000);

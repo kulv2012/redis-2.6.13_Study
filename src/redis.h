@@ -171,6 +171,8 @@
 /* AOF states */
 #define REDIS_AOF_OFF 0             /* AOF is off */
 #define REDIS_AOF_ON 1              /* AOF is on */
+//下面的server.aof_state 标志代表后台进程正在保存AOF快照中，
+//保存完成后，serverCron会将状态切换为ON的。
 #define REDIS_AOF_WAIT_REWRITE 2    /* AOF waits rewrite to start appending */
 
 /* Client flags */
@@ -247,6 +249,7 @@
 /* Append only defines */
 #define AOF_FSYNC_NO 0
 #define AOF_FSYNC_ALWAYS 1
+//最多隔2秒fsync刷新一次
 #define AOF_FSYNC_EVERYSEC 2
 
 /* Zip structure related defaults */

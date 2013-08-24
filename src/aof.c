@@ -173,8 +173,8 @@ void stopAppendOnly(void) {
 //当用户敲入这个命令时会调用这里: config set appendonly no
 //调用顺序为configCommand->configSetCommand->stopAppendOnly
     redisAssert(server.aof_state != REDIS_AOF_OFF);
-    flushAppendOnlyFile(1);
-    aof_fsync(server.aof_fd);
+    flushAppendOnlyFile(1);//强制将当前的server.aof_buf上的数据刷到磁盘上去。
+    aof_fsync(server.aof_fd);//强制调用stop。都不放后台搞了。
     close(server.aof_fd);
 
     server.aof_fd = -1;
@@ -220,6 +220,7 @@ int startAppendOnly(void) {
     }
     /* We correctly switched on AOF, now wait for the rerwite to be complete
      * in order to append data on disk. */
+    //下面这条语句，会让Redis写完AOF快照后，继续追加数据到AOF文件。
     server.aof_state = REDIS_AOF_WAIT_REWRITE;
     return REDIS_OK;
 }
@@ -246,6 +247,7 @@ void flushAppendOnlyFile(int force) {
 //beforeSleep函数每次在aeMain等待epoll之前调用，从而调用这里带0的参数，非强制的刷aof文件。
 //将server.aof_buf的内容刷到磁盘AOF文件后面。如果有EVERYSEC标志，
 //则在后端bio进程的队列里面挂在一个事件，后续bioProcessBackgroundJobs函数会处理这个的，进行fsync
+//stopAppendOnly调用这里会force==1,强制刷新
     ssize_t nwritten;
     int sync_in_progress = 0;
 
@@ -259,12 +261,14 @@ void flushAppendOnlyFile(int force) {
          * If the fsync is still in progress we can try to delay
          * the write for a couple of seconds. */
         if (sync_in_progress) {
+			//当前服务器比较忙，上次fsync还没有完成，所以我们这次延迟一下write,fsync
             if (server.aof_flush_postponed_start == 0) {//还没开始，这是第一次进入。
                 /* No previous write postponinig, remember that we are
                  * postponing the flush and return. */
-                server.aof_flush_postponed_start = server.unixtime;//记住这次的时间，后续再看看是不是超过了2秒，如果是就进行后面的刷新操作处理。
+                //记住这次的时间，后续再看看是不是超过了2秒，如果是就进行后面的刷新操作处理。
+                server.aof_flush_postponed_start = server.unixtime;
                 return;
-            } else if (server.unixtime - server.aof_flush_postponed_start < 2) {
+            } else if (erver.unixtime - server.aof_flush_postponed_start < 2) {
                 /* We were already waiting for fsync to finish, but for less
                  * than two seconds this is still ok. Postpone again. */
                 return;
@@ -312,6 +316,7 @@ void flushAppendOnlyFile(int force) {
         }
         exit(1);
     }
+	//统计AOF文件的大小，用来判断是否需要自动AOF rewrite文件了
     server.aof_current_size += nwritten;
 
     /* Re-use AOF buffer when it is small enough. The maximum comes from the
@@ -340,6 +345,7 @@ void flushAppendOnlyFile(int force) {
                 server.unixtime > server.aof_last_fsync)) {
       //每隔一秒挂一个刷新磁盘操作到bio_jobs[REDIS_BIO_AOF_FSYNC]数组里面
       //供后端的定时任务进程去处理。这个进程执行bioProcessBackgroundJobs函数。
+      //如果当前正有挂载的fsync任务没有完成，就不挂载了，服务器比较忙。
         if (!sync_in_progress) 
 			aof_background_fsync(server.aof_fd);
         server.aof_last_fsync = server.unixtime;
@@ -408,9 +414,9 @@ sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, r
     decrRefCount(argv[2]);
     return buf;
 }
-
+//feedAppendOnlyFile这个函数的调用者会判断是否AOF打开了，如果关闭了就不会调用的。
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
-	//将这条指令还原成字符串表示，然后将其追加到server.aof_buf 字符串后面，
+	//propagate函数调用这里，将这条指令还原成字符串表示，然后将其追加到server.aof_buf 字符串后面，
 	//在beforeSleep的末尾会调用flushAppendOnlyFile将server.aof_buf里面的数据写入文件的。
     sds buf = sdsempty();
     robj *tmpargv[3];
@@ -1070,6 +1076,9 @@ void bgrewriteaofCommand(redisClient *c) {
         addReplyStatus(c,"Background append only file rewriting scheduled");
     } else if (rewriteAppendOnlyFileBackground() == REDIS_OK) {
         addReplyStatus(c,"Background append only file rewriting started");
+		//注意这里没有下面的语句，这样就不会影响REDIS本身是否打开了自动aof机制。
+		//下面这条语句，会让Redis写完AOF快照后，继续追加数据到AOF文件。
+    	//server.aof_state = REDIS_AOF_WAIT_REWRITE;
     } else {
         addReply(c,shared.err);
     }
@@ -1220,6 +1229,7 @@ void backgroundRewriteDoneHandler(int exitcode, int bysignal) {
         server.aof_lastbgrewrite_status = REDIS_OK;
 
         redisLog(REDIS_NOTICE, "Background AOF rewrite finished successfully");
+		//下面判断是否需要打开AOF，比如bgrewriteaofCommand就不需要打开AOF。
         /* Change state from WAIT_REWRITE to ON if needed */
         if (server.aof_state == REDIS_AOF_WAIT_REWRITE)
             server.aof_state = REDIS_AOF_ON;

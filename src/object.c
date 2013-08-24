@@ -272,6 +272,7 @@ int isObjectRepresentableAsLongLong(robj *o, long long *llval) {
 
 /* Try to encode a string object in order to save space */
 robj *tryObjectEncoding(robj *o) {
+//看看是否可以对对象做压缩。目前只支持很短的数字字符串，将其转为数字存储。
     long value;
     sds s = o->ptr;
 
@@ -281,7 +282,7 @@ robj *tryObjectEncoding(robj *o) {
     /* It's not safe to encode shared objects: shared objects can be shared
      * everywhere in the "object space" of Redis. Encoded objects can only
      * appear as "values" (and not, for instance, as keys) */
-     if (o->refcount > 1) return o;
+   	if (o->refcount > 1) return o;
 
     /* Currently we try to encode only strings */
     redisAssertWithInfo(NULL,o,o->type == REDIS_STRING);

@@ -63,9 +63,11 @@ static int checkStringLength(redisClient *c, long long size) {
 #define REDIS_SET_XX (1<<1)     /* Set if key exists. */
 
 void setGenericCommand(redisClient *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
-    long long milliseconds = 0; /* initialized to avoid any harmness warning */
+//flag是是否要做存在性判断。key-value，expire为超时时间间隔，unit是超时的单位。
 
+	long long milliseconds = 0; /* initialized to avoid any harmness warning */
     if (expire) {
+	//将expire字符串表示的超时间隔转换为长整形的时间，然后转换单位为毫秒。
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != REDIS_OK)
             return;
         if (milliseconds <= 0) {
@@ -77,7 +79,7 @@ void setGenericCommand(redisClient *c, int flags, robj *key, robj *val, robj *ex
 
     if ((flags & REDIS_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
         (flags & REDIS_SET_XX && lookupKeyWrite(c->db,key) == NULL))
-    {
+    {//如果已经存在或者不存在，就发送个"$-1\r\n"给客户端。
         addReply(c, abort_reply ? abort_reply : shared.nullbulk);
         return;
     }
@@ -94,6 +96,7 @@ void setCommand(redisClient *c) {
     int unit = UNIT_SECONDS;
     int flags = REDIS_SET_NO_FLAGS;
 
+	//从第三个参数开始，循环做参数格式解析，主要做后面的标志参数。[NX] [XX] [EX
     for (j = 3; j < c->argc; j++) {
         char *a = c->argv[j]->ptr;
         robj *next = (j == c->argc-1) ? NULL : c->argv[j+1];
@@ -119,8 +122,8 @@ void setCommand(redisClient *c) {
             return;
         }
     }
-
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
+	//看看是否可以对对象做压缩。目前只支持很短的数字字符串，将其转为数字存储。
+    c->argv[2] = tryObjectEncoding(c->argv[2]);//value部分
     setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
 }
 
