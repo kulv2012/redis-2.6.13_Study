@@ -1,7 +1,0 @@
----- freeMemoryIfNeeded Matches (6 in 5 files) ----
-Config.c (l:\dropbox\github\redis-2.6.13_study\src):            freeMemoryIfNeeded();
-Networking.c (l:\dropbox\github\redis-2.6.13_study\src):/* Helper function used by freeMemoryIfNeeded() in order to flush slaves
-Redis.c (l:\dropbox\github\redis-2.6.13_study\src):        int retval = freeMemoryIfNeeded();
-Redis.c (l:\dropbox\github\redis-2.6.13_study\src):int freeMemoryIfNeeded(void) {
-Redis.h (l:\dropbox\github\redis-2.6.13_study\src):int freeMemoryIfNeeded(void);
-Scripting.c (l:\dropbox\github\redis-2.6.13_study\src):        if (freeMemoryIfNeeded() == REDIS_ERR) {
