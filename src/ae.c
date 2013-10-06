@@ -398,6 +398,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
             if (fe->mask & mask & AE_WRITABLE) {//处理写事件。
                 if (!rfired || fe->wfileProc != fe->rfileProc)//如果没有处理可读事件 或者 读写句柄不相同，那么需要调用其函数。
+                //给客户端发送数据的处理函数为sendReplyToClient
                     fe->wfileProc(eventLoop,fd,fe->clientData,mask);
             }
             processed++;

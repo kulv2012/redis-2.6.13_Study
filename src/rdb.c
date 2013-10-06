@@ -1179,9 +1179,9 @@ eoferr: /* unexpected end of file is handled here with a fatal exit */
 
 /* A background saving child (BGSAVE) terminated its work. Handle this. */
 void backgroundSaveDoneHandler(int exitcode, int bysignal) {
+//serverCron在判断如果刚刚有BGSAVE操作完成，就会调用这里，来处理从库的事情。
     if (!bysignal && exitcode == 0) {
-        redisLog(REDIS_NOTICE,
-            "Background saving terminated with success");
+        redisLog(REDIS_NOTICE, "Background saving terminated with success");
         server.dirty = server.dirty - server.dirty_before_bgsave;
         server.lastsave = time(NULL);
         server.lastbgsave_status = REDIS_OK;
@@ -1189,8 +1189,7 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
         redisLog(REDIS_WARNING, "Background saving error");
         server.lastbgsave_status = REDIS_ERR;
     } else {
-        redisLog(REDIS_WARNING,
-            "Background saving terminated by signal %d", bysignal);
+        redisLog(REDIS_WARNING, "Background saving terminated by signal %d", bysignal);
         rdbRemoveTempFile(server.rdb_child_pid);
         /* SIGUSR1 is whitelisted, so we have a way to kill a child without
          * tirggering an error conditon. */
@@ -1202,7 +1201,7 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
     server.rdb_save_time_start = -1;
     /* Possibly there are slaves waiting for a BGSAVE in order to be served
      * (the first stage of SYNC is a bulk transfer of dump.rdb) */
-    updateSlavesWaitingBgsave(exitcode == 0 ? REDIS_OK : REDIS_ERR);
+    updateSlavesWaitingBgsave(exitcode == 0 ? REDIS_OK : REDIS_ERR);//上面注释说了，如果有挂起的等待BGSAVE操作的从库，处理之
 }
 
 void saveCommand(redisClient *c) {

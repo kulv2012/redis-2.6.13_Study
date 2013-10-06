@@ -490,14 +490,14 @@ long long getExpire(redisDb *db, robj *key) {
 void propagateExpire(redisDb *db, robj *key) {
     robj *argv[2];
 
-    argv[0] = shared.del;
+    argv[0] = shared.del;//拼接一调删除语句del key
     argv[1] = key;
     incrRefCount(argv[0]);
     incrRefCount(argv[1]);
 
-    if (server.aof_state != REDIS_AOF_OFF)
+    if (server.aof_state != REDIS_AOF_OFF)//将这条删除语句放到aof缓冲区后面。
         feedAppendOnlyFile(server.delCommand,db->id,argv,2);
-    if (listLength(server.slaves))
+    if (listLength(server.slaves))//如果有从库，需要将其放到从库后面，这样就通知从库更新数据了。
         replicationFeedSlaves(server.slaves,db->id,argv,2);
 
     decrRefCount(argv[0]);
