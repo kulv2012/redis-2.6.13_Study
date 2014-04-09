@@ -478,7 +478,7 @@ int rdbLoadObjectType(rio *rdb) {
 int rdbSaveObject(rio *rdb, robj *o) {
     int n, nwritten = 0;
 
-    if (o->type == REDIS_STRING) {
+    if (o->type == REDIS_STRING) {//如果是字符串，那么简单写入文件就行了
         /* Save a string value */
         if ((n = rdbSaveStringObject(rdb,o)) == -1) return -1;
         nwritten += n;
@@ -497,8 +497,8 @@ int rdbSaveObject(rio *rdb, robj *o) {
             if ((n = rdbSaveLen(rdb,listLength(list))) == -1) return -1;
             nwritten += n;
 
-            listRewind(list,&li);
-            while((ln = listNext(&li))) {
+            listRewind(list,&li);//从开头开始
+            while((ln = listNext(&li))) {//一个个list元素的写入磁盘。
                 robj *eleobj = listNodeValue(ln);
                 if ((n = rdbSaveStringObject(rdb,eleobj)) == -1) return -1;
                 nwritten += n;
@@ -612,7 +612,7 @@ int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
                         long long expiretime, long long now)
 {
     /* Save the expire time */
-    if (expiretime != -1) {
+    if (expiretime != -1) {//如果有超时时间，写一个绝对的时间进去
         /* If this key is already expired skip it */
         if (expiretime < now) return 0;
         if (rdbSaveType(rdb,REDIS_RDB_OPCODE_EXPIRETIME_MS) == -1) return -1;
@@ -652,9 +652,9 @@ int rdbSave(char *filename) {
     snprintf(magic,sizeof(magic),"REDIS%04d",REDIS_RDB_VERSION);
     if (rdbWriteRaw(&rdb,magic,9) == -1) goto werr;
 
-    for (j = 0; j < server.dbnum; j++) {
+    for (j = 0; j < server.dbnum; j++) {//一个个db的顺序保存
         redisDb *db = server.db+j;
-        dict *d = db->dict;
+        dict *d = db->dict;//获取这个的键空间
         if (dictSize(d) == 0) continue;
         di = dictGetSafeIterator(d);
         if (!di) {

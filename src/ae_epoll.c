@@ -112,7 +112,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
 
             if (e->events & EPOLLIN) mask |= AE_READABLE;
             if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
-            if (e->events & EPOLLERR) mask |= AE_WRITABLE;
+            if (e->events & EPOLLERR) mask |= AE_WRITABLE;//这是什么情况，错误把它当可写事件来处理，这样后面会失败的是吗
             if (e->events & EPOLLHUP) mask |= AE_WRITABLE;
 
 			//下面只是标注了一下到底有哪些事件触发了。由上层调用方去实际处理。
