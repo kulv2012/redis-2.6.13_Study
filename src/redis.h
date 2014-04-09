@@ -401,8 +401,8 @@ typedef struct redisClient {
 	//每次处理一对参数后清空，用来标记是否读取了这个参数的长度部分，也就是第一行。
     long bulklen;           /* length of bulk argument in multi bulk request */
     list *reply;//给客户端返回的数据部分，如果buf数组里面有东西，那就只能放到这个链表的后面了。
-    unsigned long reply_bytes; /* Tot bytes of objects in reply list */
-    int sentlen;
+    unsigned long reply_bytes; /* Tot bytes of objects in reply list *///reply链表里面的总未发送数据长度
+    int sentlen;//指在buf缓冲区里面或者reply链表的头部节点中，已经发送完的字节数
     time_t ctime;           /* Client creation time */
 	//记录这个连接的最后一次交互的时间，比如读取数据了，就更新。
     time_t lastinteraction; /* time of the last interaction, used for timeout */

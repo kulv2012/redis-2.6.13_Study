@@ -988,7 +988,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
             if (pid == server.rdb_child_pid) {
 				//把数据保存到磁盘上去，跟AOF的区别是AOF会不断的追加改动到文件。
-				//RDB只会将快照保存，并且通知其他slave
+				//RDB只会将快照保存，并且如果有从库发送完SYNV后再等待BGSAVE 结束， 那需要将rdb文件以及累积数据放给slave
                 backgroundSaveDoneHandler(exitcode,bysignal);
             } else if (pid == server.aof_child_pid) {
             //退出的进程的pid为aof日志的进程，也就是在rewriteAppendOnlyFileBackground这里fork创建的进程
@@ -1595,7 +1595,7 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {//call()等函数处理完指令后，调用这里将指令加入到AOF缓冲里面，以供后续追加到AOF文件
-//如果aof_state开关打开了，并且flags职位了写入AOF文件的标志，那么久需要将本指令加入到AOF缓存去。
+//如果aof_state开关打开了，并且flags置位了写入AOF文件的标志，那么久需要将本指令加入到AOF缓存去。
     if (server.aof_state != REDIS_AOF_OFF && flags & REDIS_PROPAGATE_AOF)
         feedAppendOnlyFile(cmd,dbid,argv,argc);
 	

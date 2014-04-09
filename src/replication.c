@@ -40,6 +40,7 @@
 /* ---------------------------------- MASTER -------------------------------- */
 
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
+//propagateExpire删除超时key，或者propagate函数分发同步客户端写操作时会调用这里。
 //将这条指令发送给所有的slaves，放到其缓冲里面以待发送。
     listNode *ln;
     listIter li;
@@ -49,7 +50,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     while((ln = listNext(&li))) {
         redisClient *slave = ln->value;
 
-//下面不发送给这个slave，那么数据怎么办?REDIS_REPL_WAIT_BGSAVE_START是什么
+//下面不发送给这个slave，那么数据怎么办? 后面记着了的。这个状态的客户端是个从库，并且sync后rdb还没有开始，没必要为其追加写操作日志。
         /* Don't feed slaves that are still waiting for BGSAVE to start */
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
 
@@ -133,7 +134,7 @@ void syncCommand(redisClient *c) {
      * the client about already issued commands. We need a fresh reply
      * buffer registering the differences between the BGSAVE and the current
      * dataset, so that we can copy to other slaves if needed. */
-    if (listLength(c->reply) != 0) {
+    if (listLength(c->reply) != 0) {//如果服务端还有数据没有发送给客户端，那先不处理sync请求
         addReplyError(c,"SYNC is invalid with pending input");
         return;
     }
@@ -150,23 +151,29 @@ void syncCommand(redisClient *c) {
         listIter li;
 
         listRewind(server.slaves,&li);
+		//正好现在有RDB程序在保存日志，那么我需要查看一下是否正好有从库在等待这个RDB结束的操作
+		//如果有，我就可以偷偷的将其尚未发送，累积起来的写操作日志拷贝一份，插队到后面作为从库。
+		//等待全部RDB文件发送完后将这部分累积的日志发送给这个新从库，其实就是类似插队的意思，插上对后，顺便打一碗饭
         while((ln = listNext(&li))) {
             slave = ln->value;
             if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END) break;
         }
-        if (ln) {
+        if (ln) {//正好有其他slave出发了BGSAVE操作，那么就正好可以通过copy同伴的缓冲区的方式追上。
+        //这些buffer是一个客户端注册成为从库之后，主库会主动的在replicationFeedSlaves
+        //里面将新写入日志追加到这里的。只是那个时候还不能发送，没注册写事件
             /* Perfect, the server is already registering differences for
              * another slave. Set the right state, and copy the buffer. */
-            copyClientOutputBuffer(c,slave);
+            copyClientOutputBuffer(c,slave);//将要发送给之前的slave的数据拷贝一份，也就是也要发送给新的这个从库。
             c->replstate = REDIS_REPL_WAIT_BGSAVE_END;
             redisLog(REDIS_NOTICE,"Waiting for end of BGSAVE for SYNC");
         } else {
             /* No way, we need to wait for the next BGSAVE in order to
              * register differences */
+        //由于之前正好没有客户端在后台保存过程中发送sync，所以只能老老实话等待下一个bgsave了。
             c->replstate = REDIS_REPL_WAIT_BGSAVE_START;
             redisLog(REDIS_NOTICE,"Waiting for next BGSAVE for SYNC");
         }
-    } else {
+    } else {//没办法了，老老实实进行BGSAVE，
         /* Ok we don't have a BGSAVE in progress, let's start one */
         redisLog(REDIS_NOTICE,"Starting BGSAVE for SYNC");
         if (rdbSaveBackground(server.rdb_filename) != REDIS_OK) {
@@ -176,11 +183,11 @@ void syncCommand(redisClient *c) {
         }
         c->replstate = REDIS_REPL_WAIT_BGSAVE_END;
     }
-
+//SYNC命令只是尝试启动RDB快照，真正的数据发送再快照完成后的updateSlavesWaitingBgsave
     if (server.repl_disable_tcp_nodelay)
         anetDisableTcpNoDelay(NULL, c->fd); /* Non critical if it fails. */
     c->repldbfd = -1;
-    c->flags |= REDIS_SLAVE;
+    c->flags |= REDIS_SLAVE;//成功，标记为slave
     c->slaveseldb = 0;
     listAddNodeTail(server.slaves,c);
     return;
@@ -233,15 +240,16 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
     char buf[REDIS_IOBUF_LEN];
     ssize_t nwritten, buflen;
 
-    if (slave->repldboff == 0) {
+    if (slave->repldboff == 0) {//还没发送一个字节，那么需要将总文件大小发送给slave。
         /* Write the bulk write count before to transfer the DB. In theory here
          * we don't know how much room there is in the output buffer of the
          * socket, but in practice SO_SNDLOWAT (the minimum count for output
          * operations) will never be smaller than the few bytes we need. */
         sds bulkcount;
-
-        bulkcount = sdscatprintf(sdsempty(),"$%lld\r\n",(unsigned long long)
-            slave->repldbsize);
+//设置为RDB文件的大小。上面注释的意思是，咱们这里是进行异步发送的，
+//连接可写并不代表可以写这么多字节，但是实在下面的字符串太短，实际上没问题的，能发送出去的，TCP来说SO_SNDLOWAT默认为2048
+//所以这里不进行部分发送的处理了。不然麻烦点。
+        bulkcount = sdscatprintf(sdsempty(),"$%lld\r\n",(unsigned long long) slave->repldbsize);
         if (write(fd,bulkcount,sdslen(bulkcount)) != (signed)sdslen(bulkcount))
         {
             sdsfree(bulkcount);
@@ -251,27 +259,26 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
         sdsfree(bulkcount);
     }
     lseek(slave->repldbfd,slave->repldboff,SEEK_SET);
-    buflen = read(slave->repldbfd,buf,REDIS_IOBUF_LEN);
+    buflen = read(slave->repldbfd,buf,REDIS_IOBUF_LEN);//跳到未发送的位置，一次读取16K字节
     if (buflen <= 0) {
         redisLog(REDIS_WARNING,"Read error sending DB to slave: %s",
             (buflen == 0) ? "premature EOF" : strerror(errno));
-        freeClient(slave);
+        freeClient(slave);//出错都不给客户端一点错误的···不过还好，之前发送过长度了的，slave会超时了的。
         return;
     }
     if ((nwritten = write(fd,buf,buflen)) == -1) {
-        redisLog(REDIS_VERBOSE,"Write error sending DB to slave: %s",
-            strerror(errno));
+        redisLog(REDIS_VERBOSE,"Write error sending DB to slave: %s", strerror(errno));
         freeClient(slave);
         return;
     }
-    slave->repldboff += nwritten;
-    if (slave->repldboff == slave->repldbsize) {
+    slave->repldboff += nwritten;//向后移动指针，可能没有全部发送完毕。
+    if (slave->repldboff == slave->repldbsize) {//发送完毕了，可以关闭RDB快照文件了。
         close(slave->repldbfd);
         slave->repldbfd = -1;
+		//删除当前的这个可写回调sendBulkToSlave，注册一个新的sendReplyToClient可写回调，这样就能将增量的写日志发送给slave了。
         aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
         slave->replstate = REDIS_REPL_ONLINE;
-        if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE,
-            sendReplyToClient, slave) == AE_ERR) {
+        if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendReplyToClient, slave) == AE_ERR) {
             freeClient(slave);
             return;
         }
@@ -286,18 +293,20 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
  * The goal of this function is to handle slaves waiting for a successful
  * background saving in order to perform non-blocking synchronization. */
 void updateSlavesWaitingBgsave(int bgsaveerr) {
+//backgroundSaveDoneHandler在BGSAVE操作完成后，调用这里来处理可能的从库事件。
     listNode *ln;
     int startbgsave = 0;
     listIter li;
 
     listRewind(server.slaves,&li);
-    while((ln = listNext(&li))) {
+    while((ln = listNext(&li))) {//循环遍历每一个从库，查看其状态进行相应的处理。
         redisClient *slave = ln->value;
 
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
-            startbgsave = 1;
-            slave->replstate = REDIS_REPL_WAIT_BGSAVE_END;
+            startbgsave = 1;//刚才在做bgsave的时候，有客户端来请求sync同步，但是我没有理他，现在得给他准备了。
+            slave->replstate = REDIS_REPL_WAIT_BGSAVE_END;//修改这个状态后，新的写入操作会记录到这个连接的缓存里
         } else if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END) {
+        //后台保存完成，下面需要发送rdb文件了，丫的够大的
             struct redis_stat buf;
 
             if (bgsaveerr != REDIS_OK) {
@@ -305,6 +314,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
                 redisLog(REDIS_WARNING,"SYNC failed. BGSAVE child returned an error");
                 continue;
             }
+			//打开这个rdb_filename,要准备给这个slave发送数据了。
             if ((slave->repldbfd = open(server.rdb_filename,O_RDONLY)) == -1 ||
                 redis_fstat(slave->repldbfd,&buf) == -1) {
                 freeClient(slave);
@@ -313,15 +323,16 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
             }
             slave->repldboff = 0;
             slave->repldbsize = buf.st_size;
+//记住此时slave->repldbfd没有关闭，可写事件的时候就不需要打开了。
             slave->replstate = REDIS_REPL_SEND_BULK;
-            aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
+            aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);//删掉之前的可写回调，注册为sendBulkToSlave
             if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendBulkToSlave, slave) == AE_ERR) {
                 freeClient(slave);
                 continue;
             }
         }
     }
-    if (startbgsave) {
+    if (startbgsave) {//悲剧，又有要sync的，还得保存一次。
         if (rdbSaveBackground(server.rdb_filename) != REDIS_OK) {
             listIter li;
 
@@ -329,7 +340,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
             redisLog(REDIS_WARNING,"SYNC failed. BGSAVE failed");
             while((ln = listNext(&li))) {
                 redisClient *slave = ln->value;
-
+				//这下面似乎有问题，replstate已经在上面被设置为了_END。https://github.com/antirez/redis/issues/1308
                 if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START)
                     freeClient(slave);
             }

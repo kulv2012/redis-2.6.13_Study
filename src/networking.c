@@ -523,6 +523,7 @@ void addReplyBulkLongLong(redisClient *c, long long ll) {
  * The function takes care of freeing the old output buffers of the
  * destination client. */
 void copyClientOutputBuffer(redisClient *dst, redisClient *src) {
+//buffer包括2部分，buf和reply列表
     listRelease(dst->reply);
     dst->reply = listDup(src->reply);
     memcpy(dst->buf,src->buf,src->bufpos);
@@ -719,6 +720,7 @@ void freeClientsInAsyncFreeQueue(void) {
 }
 
 void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
+//privdata为fe->clientData，也就是这个连接的buf数组。
     redisClient *c = privdata;
     int nwritten = 0, totwritten = 0, objlen;
     size_t objmem;
@@ -727,24 +729,25 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     REDIS_NOTUSED(mask);
 
     while(c->bufpos > 0 || listLength(c->reply)) {
-        if (c->bufpos > 0) {
-            if (c->flags & REDIS_MASTER) {
+        if (c->bufpos > 0) {//buf里面有东西，先必须发送这部分数据。
+            if (c->flags & REDIS_MASTER) {//这个目前只有readSyncBulkPayload能够调用设置，也就是说这个是跟master机器的连接，不需要发送数据。
                 /* Don't reply to a master */
-                nwritten = c->bufpos - c->sentlen;
-            } else {
+                nwritten = c->bufpos - c->sentlen;//直接假设全部发送完毕了。
+            } else {//直接调用write发送buf上的数据。发多少算多少。
                 nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen);
                 if (nwritten <= 0) break;
             }
-            c->sentlen += nwritten;
+            c->sentlen += nwritten;//更新标记，后面可以发了就从这里之后发送。
             totwritten += nwritten;
 
             /* If the buffer was sent, set bufpos to zero to continue with
              * the remainder of the reply. */
             if (c->sentlen == c->bufpos) {
+		//清空这个buf，以备后面写入。不过放心，如果reply数组不为空的时候，是不会写到buf上的。只能放在reply后面。
                 c->bufpos = 0;
                 c->sentlen = 0;
             }
-        } else {
+        } else {//然后就是c->reply上面有数据，那就一个个遍历发送数据。发多少算多少，因为是同步不阻塞的发送的。
             o = listNodeValue(listFirst(c->reply));
             objlen = sdslen(o->ptr);
             objmem = zmalloc_size_sds(o->ptr);
@@ -754,10 +757,10 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
                 continue;
             }
 
-            if (c->flags & REDIS_MASTER) {
+            if (c->flags & REDIS_MASTER) {//这是master机器的连接，不发送返回数据。
                 /* Don't reply to a master */
                 nwritten = objlen - c->sentlen;
-            } else {
+            } else {//也是一块块的写，写多少算多少。这里其实可以用writev的方式发送，效率更高。
                 nwritten = write(fd, ((char*)o->ptr)+c->sentlen,objlen-c->sentlen);
                 if (nwritten <= 0) break;
             }
@@ -767,10 +770,12 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
             /* If we fully sent the object on head go to the next one */
             if (c->sentlen == objlen) {
                 listDelNode(c->reply,listFirst(c->reply));
-                c->sentlen = 0;
-                c->reply_bytes -= objmem;
+                c->sentlen = 0;//清空c->reply头部节点里面已经发送完的字节数，这样循环下一次进来就能进入下一个节点的开头部分了。
+                c->reply_bytes -= objmem;//减少reply链表里面的总未发送数据长度
             }
         }
+		//下面的注释说明一切了，为了避免某个连接一家独大占用服务器资源，导致其他连接没有机会，必须得暂时退出服务其他连接。
+		//或者如果在内存紧张的时候，就必须继续发送了，因为这个连接可能占用太多内存。
         /* Note that we avoid to send more than REDIS_MAX_WRITE_PER_EVENT
          * bytes, in a single threaded server it's a good idea to serve
          * other clients as well, even if a very large request comes from
@@ -780,11 +785,10 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
          * However if we are over the maxmemory limit we ignore that and
          * just deliver as much data as it is possible to deliver. */
         if (totwritten > REDIS_MAX_WRITE_PER_EVENT &&
-            (server.maxmemory == 0 ||
-             zmalloc_used_memory() < server.maxmemory)) break;
+            (server.maxmemory == 0 || zmalloc_used_memory() < server.maxmemory)) break;
     }
     if (nwritten == -1) {
-        if (errno == EAGAIN) {
+        if (errno == EAGAIN) {//这个是因为FD暂时不可写的时候设置的，待会还可以写的。
             nwritten = 0;
         } else {
             redisLog(REDIS_VERBOSE,
@@ -793,10 +797,10 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
             return;
         }
     }
-    if (totwritten > 0) c->lastinteraction = server.unixtime;
-    if (c->bufpos == 0 && listLength(c->reply) == 0) {
+    if (totwritten > 0) c->lastinteraction = server.unixtime;//更新一下活跃时间，用来计算超时。
+    if (c->bufpos == 0 && listLength(c->reply) == 0) {//这个连接上的数据全部发送完毕了。那么清空可写事件。有数据要发送再设置。
         c->sentlen = 0;
-        aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
+        aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);//这个对于减少资源占用很重要。不然内核得为每个连接都保持一个数组项以及各个wait object等。
 
         /* Close connection after entire reply has been sent. */
         if (c->flags & REDIS_CLOSE_AFTER_REPLY) freeClient(c);
