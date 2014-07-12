@@ -445,7 +445,7 @@ void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
         }
         redisLog(REDIS_NOTICE, "MASTER <-> SLAVE sync: Loading DB in memory");
         signalFlushedDb(-1);
-        emptyDb();
+        emptyDb();//清空整个数据库
         /* Before loading the DB into memory we need to delete the readable
          * handler, otherwise it will get called recursively since
          * rdbLoad() will call the event loop to process events from time to
@@ -615,8 +615,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
             redisLog(REDIS_WARNING,"Error reply to PING from master: '%s'",buf);
             goto error;
         } else {
-            redisLog(REDIS_NOTICE,
-                "Master replied to PING, replication can continue...");
+            redisLog(REDIS_NOTICE, "Master replied to PING, replication can continue...");
         }
     }
 
@@ -793,11 +792,9 @@ void slaveofCommand(redisClient *c) {
 
 void replicationCron(void) {
     /* Non blocking connection timeout? */
-    if (server.masterhost &&
-        (server.repl_state == REDIS_REPL_CONNECTING ||
-         server.repl_state == REDIS_REPL_RECEIVE_PONG) &&
-        (time(NULL)-server.repl_transfer_lastio) > server.repl_timeout)
-    {
+    if (server.masterhost && 
+		(server.repl_state == REDIS_REPL_CONNECTING || server.repl_state == REDIS_REPL_RECEIVE_PONG) &&
+        (time(NULL)-server.repl_transfer_lastio) > server.repl_timeout ) {
         redisLog(REDIS_WARNING,"Timeout connecting to the MASTER...");
         undoConnectWithMaster();
     }
@@ -819,7 +816,7 @@ void replicationCron(void) {
     }
 
     /* Check if we should connect to a MASTER */
-    if (server.repl_state == REDIS_REPL_CONNECT) {
+    if (server.repl_state == REDIS_REPL_CONNECT) {//准备连接MASTER
         redisLog(REDIS_NOTICE,"Connecting to MASTER...");
         if (connectWithMaster() == REDIS_OK) {
             redisLog(REDIS_NOTICE,"MASTER <-> SLAVE sync started");

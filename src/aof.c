@@ -280,7 +280,7 @@ void flushAppendOnlyFile(int force) {
         }
     }
 
-	//到这里后，肯定是等的超过了2秒，或者后面没有进程在刷新AOF.
+	//到这里后，肯定是等的超过了2秒，或者后面没有进程在刷新AOF.或者不需要sync等
     /* If you are following this code path, then we are going to write so
      * set reset the postponed flush sentinel to zero. */
     server.aof_flush_postponed_start = 0;
@@ -334,7 +334,8 @@ void flushAppendOnlyFile(int force) {
         (server.aof_child_pid != -1 || server.rdb_child_pid != -1))
             return;
 //调用fdatasync将数据刷到磁盘去，刷到磁盘缓冲区了。并没有写到磁盘介质中。
-//真刷，在主进程中干这个事情太危险了，会阻塞的。
+//真刷，在主进程中干这个事情太危险了，会阻塞的。注意这里用的是fdatasync， 
+//fdatasync的功能与fsync类似，但是仅仅在必要的情况下才会同步metadata，因此可以减少一次IO写操作
     /* Perform the fsync if needed. */
     if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
         /* aof_fsync is defined as fdatasync() for Linux in order to avoid
